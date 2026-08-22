@@ -122,24 +122,3 @@ export function generateTasks({ fiscalYear, profile, holidays = HOLIDAYS, obliga
   }
   return tasks.sort((a, b) => (a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : 0))
 }
-
-/** 合併：保留使用者已填寫的狀態，同時吸收主檔異動（新增/移除的檢核項目） */
-export function mergeTasks(existing: Task[], generated: Task[], obligations: Obligation[]): Task[] {
-  const byId = new Map(existing.map((t) => [t.id, t]))
-  const oblById = new Map(obligations.map((o) => [o.id, o]))
-  return generated.map((g) => {
-    const prev = byId.get(g.id)
-    if (!prev) return g
-    const defs = oblById.get(g.obligationId)?.checklist ?? []
-    const prevByDef = new Map(prev.checklist.map((c) => [c.defId, c]))
-    return {
-      ...g,
-      status: prev.status,
-      assignee: prev.assignee,
-      completedAt: prev.completedAt,
-      completedBy: prev.completedBy,
-      note: prev.note,
-      checklist: defs.map((d) => prevByDef.get(d.id) ?? { defId: d.id, checked: false }),
-    }
-  })
-}

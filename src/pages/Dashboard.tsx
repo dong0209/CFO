@@ -11,10 +11,9 @@ import { AreaPill, Bar, CheckPill, HealthPill, Stat, daysLabel } from '../compon
 import type { Task } from '../domain/types'
 
 export function Dashboard() {
-  const { state } = useStore()
+  const { workspace, tasks: allTasks, today } = useStore()
   const inputs = useCheckInputs()
   const [selected, setSelected] = useState<Task | null>(null)
-  const today = state.today
 
   const checks = useMemo(() => runAllRules(CHECK_RULES, inputs), [inputs])
   const score = complianceScore(checks, CHECK_RULES)
@@ -23,7 +22,7 @@ export function Dashboard() {
 
   const enriched = useMemo(
     () =>
-      state.tasks.map((t) => {
+      allTasks.map((t) => {
         const o = OBLIGATION_MAP[t.obligationId]
         const req = new Set(o.checklist.filter((c) => c.required).map((c) => c.id))
         return {
@@ -35,7 +34,7 @@ export function Dashboard() {
           days: diffDays(t.dueDate, today),
         }
       }),
-    [state.tasks, today],
+    [allTasks, today],
   )
 
   const overdue = enriched.filter((e) => e.health === 'OVERDUE')
@@ -69,7 +68,7 @@ export function Dashboard() {
       <div className="page-head">
         <h2>財務長工作台</h2>
         <p>
-          {state.profile.name}（{state.profile.stockCode}）・{state.fiscalYear} 會計年度・基準日 {today}
+          {workspace.profile.name}（{workspace.profile.stockCode}）・{workspace.fiscalYear} 會計年度・基準日 {today}
         </p>
       </div>
 
@@ -129,7 +128,7 @@ export function Dashboard() {
         </div>
 
         <div className="card">
-          <h3>檢核紅黃燈<span className="sub">依 {state.financials.find((f) => f.id === state.activeFinancialId)?.label}</span></h3>
+          <h3>檢核紅黃燈<span className="sub">依 {workspace.financials.find((f) => f.id === workspace.activeFinancialId)?.label}</span></h3>
           {failed.length === 0 && warned.length === 0 ? (
             <p className="muted small">所有檢核規則均通過。</p>
           ) : (

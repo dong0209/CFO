@@ -18,7 +18,7 @@ const CATEGORY_LABEL: Record<RuleCategory, string> = {
 const CATEGORY_ORDER: RuleCategory[] = ['RECONCILIATION', 'COVENANT', 'REGULATORY_LIMIT', 'LIQUIDITY', 'ANALYTICAL']
 
 export function Checks() {
-  const { state, dispatch } = useStore()
+  const { workspace, mutate, readOnly } = useStore()
   const inputs = useCheckInputs()
   const [showInputs, setShowInputs] = useState(false)
 
@@ -33,7 +33,7 @@ export function Checks() {
     nodata: results.filter((r) => r.res.status === 'NO_DATA').length,
   }
 
-  const active = state.financials.find((f) => f.id === state.activeFinancialId) ?? state.financials[0]
+  const active = workspace.financials.find((f) => f.id === workspace.activeFinancialId) ?? workspace.financials[0]
   const groups = [...new Set(INPUT_METRICS.map((m) => m.group))]
 
   return (
@@ -44,8 +44,8 @@ export function Checks() {
       </div>
 
       <div className="toolbar">
-        <select value={state.activeFinancialId} onChange={(e) => dispatch({ type: 'SET_ACTIVE_FINANCIAL', id: e.target.value })}>
-          {state.financials.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+        <select value={workspace.activeFinancialId} onChange={(e) => mutate({ kind: 'activeFinancial', id: e.target.value })}>
+          {workspace.financials.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
         </select>
         <button className="btn" onClick={() => setShowInputs((v) => !v)}>
           {showInputs ? '收合' : '展開'}財務數據輸入（{Object.keys(active?.values ?? {}).length}/{INPUT_METRICS.length} 項已填）
@@ -74,12 +74,13 @@ export function Checks() {
                       type="number"
                       value={active?.values[m.id] ?? ''}
                       placeholder="未填"
+                      disabled={readOnly}
                       onChange={(e) =>
-                        dispatch({
-                          type: 'SET_FINANCIAL_VALUE',
+                        mutate({
+                          kind: 'financialValue',
                           id: active.id,
                           metricId: m.id,
-                          value: e.target.value === '' ? undefined : Number(e.target.value),
+                          value: e.target.value === '' ? null : Number(e.target.value),
                         })
                       }
                     />

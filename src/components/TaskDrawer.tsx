@@ -19,12 +19,12 @@ const STATUS_OPTIONS: { value: TaskStatus; label: string }[] = [
 ]
 
 export function TaskDrawer({ task, onClose }: { task: Task; onClose: () => void }) {
-  const { state, dispatch } = useStore()
+  const { today, mutate, readOnly } = useStore()
   const o = OBLIGATION_MAP[task.obligationId]
   const requiredIds = new Set(o.checklist.filter((c) => c.required).map((c) => c.id))
   const progress = checklistProgress(task, requiredIds)
-  const health = taskHealth(task, state.today)
-  const remaining = diffDays(task.dueDate, state.today)
+  const health = taskHealth(task, today)
+  const remaining = diffDays(task.dueDate, today)
   const blocked = progress.done < progress.total
 
   return (
@@ -69,7 +69,8 @@ export function TaskDrawer({ task, onClose }: { task: Task; onClose: () => void 
             <label>狀態</label>
             <select
               value={task.status}
-              onChange={(e) => dispatch({ type: 'SET_TASK_STATUS', taskId: task.id, status: e.target.value as TaskStatus })}
+              disabled={readOnly}
+              onChange={(e) => mutate({ kind: 'taskStatus', taskId: task.id, status: e.target.value as TaskStatus })}
             >
               {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
             </select>
@@ -79,7 +80,8 @@ export function TaskDrawer({ task, onClose }: { task: Task; onClose: () => void 
             <input
               value={task.assignee ?? ''}
               placeholder={ROLE_NAMES[o.owner]}
-              onChange={(e) => dispatch({ type: 'SET_TASK_FIELD', taskId: task.id, patch: { assignee: e.target.value } })}
+              disabled={readOnly}
+              onChange={(e) => mutate({ kind: 'taskField', taskId: task.id, patch: { assignee: e.target.value } })}
             />
           </div>
         </div>
@@ -99,7 +101,8 @@ export function TaskDrawer({ task, onClose }: { task: Task; onClose: () => void 
                 <input
                   type="checkbox"
                   checked={!!st?.checked}
-                  onChange={() => dispatch({ type: 'TOGGLE_CHECK', taskId: task.id, defId: def.id })}
+                  disabled={readOnly}
+                  onChange={() => mutate({ kind: 'check', taskId: task.id, defId: def.id, checked: !st?.checked })}
                 />
                 <div style={{ flex: 1 }}>
                   <div className="txt">
@@ -149,7 +152,8 @@ export function TaskDrawer({ task, onClose }: { task: Task; onClose: () => void 
             rows={4}
             value={task.note ?? ''}
             placeholder="記錄本期特殊事項、與會計師溝通結論、例外核准依據…"
-            onChange={(e) => dispatch({ type: 'SET_TASK_FIELD', taskId: task.id, patch: { note: e.target.value } })}
+            disabled={readOnly}
+            onChange={(e) => mutate({ kind: 'taskField', taskId: task.id, patch: { note: e.target.value } })}
           />
           {task.completedAt && <p className="small muted">完成於 {task.completedAt}　{task.completedBy}</p>}
         </div>

@@ -1,170 +1,200 @@
-import { createContext, useContext, useEffect, useMemo, useReducer, type ReactNode } from 'react'
-import type { CompanyProfile, FinancialPeriod, RiskItem, Task, TaskStatus } from '../domain/types'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { RECURRING_OBLIGATIONS } from '../domain/obligations'
-import { generateTasks, mergeTasks } from '../engine/schedule'
-import { todayISO, type ISODate } from '../lib/date'
-import { applyDemoProgress, DEFAULT_HOLDING, DEFAULT_PROFILE, SEED_FINANCIALS, SEED_RISKS, type HoldingState } from './seed'
+import { applyMutation, requiresAdmin, type Mutation } from '../domain/mutations'
+import type { Workspace } from '../domain/workspace'
+import type { Task } from '../domain/types'
+import { generateTasks } from '../engine/schedule'
+import { applyOverrides } from '../engine/overrides'
+import { todayISO } from '../lib/date'
+import {
+  BackendError,
+  LocalBackend,
+  detectBackend,
+  type AuditEntry,
+  type Backend,
+  type BackendMode,
+  type SessionUser,
+} from './backend'
 
-const STORAGE_KEY = 'cfo-management-system:v1'
+export type Phase = 'loading' | 'login' | 'ready' | 'error'
 
-export interface AppState {
-  profile: CompanyProfile
-  fiscalYear: number
+interface StoreValue {
+  phase: Phase
+  mode: BackendMode
+  user: SessionUser | null
+  workspace: Workspace
   tasks: Task[]
-  financials: FinancialPeriod[]
-  activeFinancialId: string
-  risks: RiskItem[]
-  holding: HoldingState
-  /** 可覆寫「今天」，便於情境演練與教育訓練 */
-  today: ISODate
-  currentUser: string
+  today: string
+  /** 唯讀（VIEWER 身分，或本機模式無法寫入儲存空間） */
+  readOnly: boolean
+  readOnlyReason?: string
+  /** 最近一次同步失敗的訊息；成功後自動清除 */
+  syncError?: string
+  fatalError?: string
+  mutate(m: Mutation): void
+  login(username: string, password: string): Promise<void>
+  logout(): Promise<void>
+  reset(): Promise<void>
+  audit(limit: number): Promise<AuditEntry[]>
+  canAdmin: boolean
 }
 
-type Action =
-  | { type: 'TOGGLE_CHECK'; taskId: string; defId: string }
-  | { type: 'SET_TASK_STATUS'; taskId: string; status: TaskStatus }
-  | { type: 'SET_TASK_FIELD'; taskId: string; patch: Partial<Pick<Task, 'note' | 'assignee'>> }
-  | { type: 'SET_FISCAL_YEAR'; year: number }
-  | { type: 'SET_PROFILE'; profile: CompanyProfile }
-  | { type: 'SET_TODAY'; today: ISODate }
-  | { type: 'SET_USER'; user: string }
-  | { type: 'SET_ACTIVE_FINANCIAL'; id: string }
-  | { type: 'SET_HOLDING'; patch: Partial<HoldingState> }
-  | { type: 'SET_FINANCIAL_VALUE'; id: string; metricId: string; value: number | undefined }
-  | { type: 'REGENERATE' }
-  | { type: 'RESET' }
+const StoreContext = createContext<StoreValue | null>(null)
 
-function buildTasks(fiscalYear: number, profile: CompanyProfile, existing: Task[] = []): Task[] {
-  const generated = generateTasks({ fiscalYear, profile, obligations: RECURRING_OBLIGATIONS })
-  return existing.length ? mergeTasks(existing, generated, RECURRING_OBLIGATIONS) : generated
-}
-
-function initialState(): AppState {
-  const today = todayISO()
-  const fiscalYear = Number(today.slice(0, 4))
-  const profile = DEFAULT_PROFILE
-  return {
-    profile,
-    fiscalYear,
-    tasks: applyDemoProgress(buildTasks(fiscalYear, profile), today),
-    financials: SEED_FINANCIALS,
-    activeFinancialId: SEED_FINANCIALS[0].id,
-    risks: SEED_RISKS,
-    holding: DEFAULT_HOLDING,
-    today,
-    currentUser: '財務長',
-  }
-}
-
-function reducer(state: AppState, action: Action): AppState {
-  switch (action.type) {
-    case 'TOGGLE_CHECK':
-      return {
-        ...state,
-        tasks: state.tasks.map((t) => {
-          if (t.id !== action.taskId) return t
-          const checklist = t.checklist.map((c) =>
-            c.defId === action.defId
-              ? c.checked
-                ? { defId: c.defId, checked: false, remark: c.remark }
-                : { ...c, checked: true, checkedBy: state.currentUser, checkedAt: state.today }
-              : c,
-          )
-          return { ...t, checklist }
-        }),
-      }
-
-    case 'SET_TASK_STATUS':
-      return {
-        ...state,
-        tasks: state.tasks.map((t) =>
-          t.id === action.taskId
-            ? {
-                ...t,
-                status: action.status,
-                completedAt: action.status === 'DONE' ? (t.completedAt ?? state.today) : undefined,
-                completedBy: action.status === 'DONE' ? (t.completedBy ?? state.currentUser) : undefined,
-              }
-            : t,
-        ),
-      }
-
-    case 'SET_TASK_FIELD':
-      return { ...state, tasks: state.tasks.map((t) => (t.id === action.taskId ? { ...t, ...action.patch } : t)) }
-
-    case 'SET_FISCAL_YEAR':
-      return { ...state, fiscalYear: action.year, tasks: buildTasks(action.year, state.profile, state.tasks) }
-
-    case 'SET_PROFILE':
-      return { ...state, profile: action.profile, tasks: buildTasks(state.fiscalYear, action.profile, state.tasks) }
-
-    case 'SET_TODAY':
-      return { ...state, today: action.today }
-
-    case 'SET_USER':
-      return { ...state, currentUser: action.user }
-
-    case 'SET_ACTIVE_FINANCIAL':
-      return { ...state, activeFinancialId: action.id }
-
-    case 'SET_HOLDING':
-      return { ...state, holding: { ...state.holding, ...action.patch } }
-
-    case 'SET_FINANCIAL_VALUE':
-      return {
-        ...state,
-        financials: state.financials.map((f) => {
-          if (f.id !== action.id) return f
-          const values = { ...f.values }
-          if (action.value === undefined || Number.isNaN(action.value)) delete values[action.metricId]
-          else values[action.metricId] = action.value
-          return { ...f, values }
-        }),
-      }
-
-    case 'REGENERATE':
-      return { ...state, tasks: buildTasks(state.fiscalYear, state.profile, state.tasks) }
-
-    case 'RESET':
-      return initialState()
-  }
-}
-
-function load(): AppState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return initialState()
-    const parsed = JSON.parse(raw) as AppState
-    // 主檔可能已更新（新增義務/檢核項目），載入時重新展開並合併使用者狀態
-    return { ...initialState(), ...parsed, tasks: buildTasks(parsed.fiscalYear, parsed.profile, parsed.tasks ?? []) }
-  } catch {
-    return initialState()
-  }
-}
-
-interface Ctx {
-  state: AppState
-  dispatch: React.Dispatch<Action>
-}
-
-const StoreContext = createContext<Ctx | null>(null)
+/** 尚未載入完成前提供的空殼，讓型別不需要到處判斷 null */
+const EMPTY_WORKSPACE = {
+  version: 1,
+  profile: {
+    name: '', taxId: '', stockCode: '', tier: 'LISTED', fiscalYearEndMonth: 12,
+    paidInCapital: 0, hasAuditCommittee: true, consolidated: true, industry: '',
+    policyLimits: { endorsementToEquityPct: 0, lendingToEquityPct: 0, singleEndorsementPct: 0 },
+  },
+  fiscalYear: new Date().getUTCFullYear(),
+  overrides: {},
+  financials: [],
+  activeFinancialId: '',
+  risks: [],
+  holding: { parValue: 10, directorShares: 0, supervisorShares: 0, asOf: '' },
+} as unknown as Workspace
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, undefined, load)
+  const [phase, setPhase] = useState<Phase>('loading')
+  const [workspace, setWorkspace] = useState<Workspace>(EMPTY_WORKSPACE)
+  const [user, setUser] = useState<SessionUser | null>(null)
+  const [today, setToday] = useState(todayISO())
+  const [readOnlyReason, setReadOnlyReason] = useState<string | undefined>()
+  const [syncError, setSyncError] = useState<string | undefined>()
+  const [fatalError, setFatalError] = useState<string | undefined>()
+  const backendRef = useRef<Backend | null>(null)
+  const [mode, setMode] = useState<BackendMode>('local')
+
+  const boot = useCallback(async () => {
+    setPhase('loading')
+    const backend = backendRef.current ?? (await detectBackend())
+    backendRef.current = backend
+    setMode(backend.mode)
+    try {
+      const r = await backend.load()
+      setWorkspace(r.workspace)
+      setUser(r.user)
+      setToday(r.today)
+      setReadOnlyReason(r.readOnlyReason)
+      if (backend instanceof LocalBackend && !backend.persist(r.workspace)) {
+        setReadOnlyReason('此瀏覽器環境無法寫入本機儲存空間，關閉頁面後變更將遺失')
+      }
+      setPhase('ready')
+    } catch (e) {
+      if (e instanceof BackendError && e.status === 401) {
+        setPhase('login')
+        return
+      }
+      setFatalError(e instanceof Error ? e.message : '載入失敗')
+      setPhase('error')
+    }
+  }, [])
 
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-    } catch {
-      // 儲存空間不足或隱私模式：僅影響持久化，不影響當次操作
-    }
-  }, [state])
+    void boot()
+  }, [boot])
 
-  const value = useMemo(() => ({ state, dispatch }), [state])
+  const tasks = useMemo(() => {
+    if (phase !== 'ready') return []
+    const skeleton = generateTasks({
+      fiscalYear: workspace.fiscalYear,
+      profile: workspace.profile,
+      obligations: RECURRING_OBLIGATIONS,
+    })
+    return applyOverrides(skeleton, workspace.overrides)
+  }, [phase, workspace.fiscalYear, workspace.profile, workspace.overrides])
+
+  const readOnly = !!readOnlyReason || user?.role === 'VIEWER'
+  const canAdmin = mode === 'local' || user?.role === 'ADMIN'
+
+  const mutate = useCallback(
+    (m: Mutation) => {
+      const backend = backendRef.current
+      if (!backend) return
+      if (user?.role === 'VIEWER') {
+        setSyncError('目前為唯讀身分，無法變更資料')
+        return
+      }
+      if (requiresAdmin(m) && mode === 'server' && user?.role !== 'ADMIN') {
+        setSyncError('此項變更需要管理者權限')
+        return
+      }
+
+      const actor = user?.displayName ?? '本機使用者'
+      let previous: Workspace | null = null
+      setWorkspace((ws) => {
+        previous = ws
+        return applyMutation(ws, m, { actor, today })
+      })
+
+      if (backend instanceof LocalBackend) {
+        // 以 setState 之後的值寫入，避免依賴尚未更新的閉包變數
+        setWorkspace((ws) => {
+          if (!backend.persist(ws)) setReadOnlyReason('此瀏覽器環境無法寫入本機儲存空間，關閉頁面後變更將遺失')
+          return ws
+        })
+        return
+      }
+
+      backend
+        .send(m)
+        .then(() => setSyncError(undefined))
+        .catch((e: unknown) => {
+          // 伺服器拒絕或斷線：回復樂觀更新，避免畫面與伺服器狀態不一致
+          if (previous) setWorkspace(previous)
+          if (e instanceof BackendError && e.status === 401) {
+            setPhase('login')
+            return
+          }
+          setSyncError(e instanceof Error ? e.message : '同步失敗，變更已回復')
+        })
+    },
+    [mode, today, user],
+  )
+
+  const login = useCallback(
+    async (username: string, password: string) => {
+      const backend = backendRef.current
+      if (!backend) throw new Error('尚未初始化')
+      const u = await backend.login(username, password)
+      setUser(u)
+      await boot()
+    },
+    [boot],
+  )
+
+  const logout = useCallback(async () => {
+    await backendRef.current?.logout()
+    setUser(null)
+    setWorkspace(EMPTY_WORKSPACE)
+    setPhase('login')
+  }, [])
+
+  const reset = useCallback(async () => {
+    const backend = backendRef.current
+    if (!backend) return
+    const ws = await backend.reset()
+    setWorkspace(ws)
+  }, [])
+
+  const audit = useCallback(async (limit: number) => backendRef.current?.audit(limit) ?? [], [])
+
+  const value = useMemo<StoreValue>(
+    () => ({
+      phase, mode, user, workspace, tasks, today,
+      readOnly, readOnlyReason, syncError, fatalError,
+      mutate, login, logout, reset, audit, canAdmin,
+    }),
+    [phase, mode, user, workspace, tasks, today, readOnly, readOnlyReason, syncError, fatalError, mutate, login, logout, reset, audit, canAdmin],
+  )
+
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
 }
 
-export function useStore(): Ctx {
+export function useStore(): StoreValue {
   const ctx = useContext(StoreContext)
   if (!ctx) throw new Error('useStore 必須在 StoreProvider 內使用')
   return ctx
@@ -172,15 +202,15 @@ export function useStore(): Ctx {
 
 /** 目前選定財務期別 + 公司政策參數，組成檢核引擎的輸入 scope */
 export function useCheckInputs(): Record<string, number> {
-  const { state } = useStore()
-  const fin = state.financials.find((f) => f.id === state.activeFinancialId) ?? state.financials[0]
+  const { workspace } = useStore()
+  const fin = workspace.financials.find((f) => f.id === workspace.activeFinancialId) ?? workspace.financials[0]
   return useMemo(
     () => ({
       ...(fin?.values ?? {}),
-      policyEndorsementPct: state.profile.policyLimits.endorsementToEquityPct,
-      policySingleEndorsementPct: state.profile.policyLimits.singleEndorsementPct,
-      policyLendingPct: state.profile.policyLimits.lendingToEquityPct,
+      policyEndorsementPct: workspace.profile.policyLimits.endorsementToEquityPct,
+      policySingleEndorsementPct: workspace.profile.policyLimits.singleEndorsementPct,
+      policyLendingPct: workspace.profile.policyLimits.lendingToEquityPct,
     }),
-    [fin, state.profile.policyLimits],
+    [fin, workspace.profile.policyLimits],
   )
 }

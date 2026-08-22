@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { computeStatutoryDue, generateTasks, mergeTasks, periodsFor } from './schedule'
+import { computeStatutoryDue, generateTasks, periodsFor } from './schedule'
 import { OBLIGATION_MAP, RECURRING_OBLIGATIONS } from '../domain/obligations'
-import type { CompanyProfile, Obligation } from '../domain/types'
+import type { CompanyProfile } from '../domain/types'
 
 const profile: CompanyProfile = {
   name: '測試股份有限公司',
@@ -135,40 +135,6 @@ describe('generateTasks', () => {
     expect(publicOnly.some((t) => t.obligationId === 'IR-EARNINGS-CALL')).toBe(false)
     expect(publicOnly.some((t) => t.obligationId === 'ESG-REPORT')).toBe(false)
     expect(publicOnly.some((t) => t.obligationId === 'RPT-MONTHLY-REVENUE')).toBe(true)
-  })
-})
-
-describe('mergeTasks', () => {
-  it('重新展開時保留使用者填寫的狀態', () => {
-    const gen = generateTasks({ fiscalYear: 2026, profile, obligations: RECURRING_OBLIGATIONS })
-    const edited = gen.map((t) =>
-      t.id === 'RPT-MONTHLY-REVENUE::2026-01'
-        ? { ...t, status: 'DONE' as const, completedAt: '2026-02-09', note: '已申報', checklist: t.checklist.map((c, i) => (i === 0 ? { ...c, checked: true } : c)) }
-        : t,
-    )
-    const merged = mergeTasks(edited, gen, RECURRING_OBLIGATIONS)
-    const t = merged.find((x) => x.id === 'RPT-MONTHLY-REVENUE::2026-01')!
-    expect(t.status).toBe('DONE')
-    expect(t.completedAt).toBe('2026-02-09')
-    expect(t.checklist[0].checked).toBe(true)
-  })
-
-  it('主檔新增檢核項目時，既有任務會補上新項目且保留舊勾選', () => {
-    const gen = generateTasks({ fiscalYear: 2026, profile, obligations: RECURRING_OBLIGATIONS })
-    const edited = gen.map((t) =>
-      t.obligationId === 'RPT-MONTHLY-REVENUE' ? { ...t, checklist: t.checklist.map((c) => ({ ...c, checked: true })) } : t,
-    )
-    const base = OBLIGATION_MAP['RPT-MONTHLY-REVENUE']
-    const extended: Obligation = {
-      ...base,
-      checklist: [...base.checklist, { id: 'NEW-01', text: '新增檢核', type: 'CONFIRM', required: true }],
-    }
-    const obligations = RECURRING_OBLIGATIONS.map((o) => (o.id === base.id ? extended : o))
-    const merged = mergeTasks(edited, generateTasks({ fiscalYear: 2026, profile, obligations }), obligations)
-    const t = merged.find((x) => x.id === 'RPT-MONTHLY-REVENUE::2026-01')!
-    expect(t.checklist).toHaveLength(base.checklist.length + 1)
-    expect(t.checklist.at(-1)).toEqual({ defId: 'NEW-01', checked: false })
-    expect(t.checklist[0].checked).toBe(true)
   })
 })
 

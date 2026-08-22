@@ -157,3 +157,15 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
   .nav { flex-direction: row; flex-wrap: wrap; }
   .main { padding: 16px; }
 }
+
+/* ── 開機／登入畫面 ── */
+.boot {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  color: var(--text-dim); font-size: 14px; padding: 24px;
+}
+.login-shell { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.login-card { width: min(380px, 100%); }
+.login-card h1 { font-size: 19px; margin: 0 0 2px; }
+.login-card p:first-of-type { margin-top: 0; }
+fieldset:disabled { opacity: .6; }
+input:disabled, select:disabled, textarea:disabled { opacity: .65; cursor: not-allowed; }

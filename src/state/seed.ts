@@ -1,4 +1,5 @@
 import type { CompanyProfile, FinancialPeriod, RiskItem, Task } from '../domain/types'
+import type { HoldingState, TaskOverride } from '../domain/workspace'
 import { diffDays, type ISODate } from '../lib/date'
 
 export const DEFAULT_PROFILE: CompanyProfile = {
@@ -16,13 +17,6 @@ export const DEFAULT_PROFILE: CompanyProfile = {
     lendingToEquityPct: 40,
     singleEndorsementPct: 20,
   },
-}
-
-export interface HoldingState {
-  parValue: number
-  directorShares: number
-  supervisorShares: number
-  asOf: string
 }
 
 export const DEFAULT_HOLDING: HoldingState = {
@@ -152,37 +146,42 @@ export const SEED_RISKS: RiskItem[] = [
 /**
  * 示範進度
  * ------------------------------------------------------------------
- * 全新系統的每一筆歷史任務都會顯示為「逾期」，那只是「還沒有人結案」，
- * 對展示與教育訓練沒有參考價值。此函式以決定性規則補上合理的歷史狀態：
+ * 全新工作區的每一筆歷史任務都會顯示為「逾期」，那只是「還沒有人結案」，
+ * 對展示與教育訓練沒有參考價值。此函式以決定性規則產生合理的歷史覆寫：
  *   - 已到期者原則上結案（完成日＝到期日）
  *   - 刻意保留少數近期項目未結案，用以呈現逾期告警與優先處理清單
  *   - 14 日內到期者標為進行中，並勾選部分檢核項目
- * 僅在初始化時套用；使用者自行編輯後的狀態由 mergeTasks 保留。
+ * 僅用於初始化示範資料；正式導入時以空工作區啟動（伺服器端 CFO_SEED_DEMO=0）。
  */
 const DEMO_OPEN_OBLIGATIONS = ['RSK-AR-AGING', 'TRE-FX-HEDGE', 'IC-AUDIT-REPORT']
+const DEMO_ACTOR = '示範資料'
 
-export function applyDemoProgress(tasks: Task[], today: ISODate): Task[] {
-  const partial = (t: Task, ratio: number): Task['checklist'] => {
+export function demoOverrides(tasks: Task[], today: ISODate): Record<string, TaskOverride> {
+  const out: Record<string, TaskOverride> = {}
+
+  const checks = (t: Task, ratio: number, at: ISODate) => {
     const n = Math.floor(t.checklist.length * ratio)
-    return t.checklist.map((c, i) => (i < n ? { ...c, checked: true, checkedBy: '示範資料', checkedAt: today } : c))
+    return Object.fromEntries(
+      t.checklist.slice(0, n).map((c) => [c.defId, { checked: true, by: DEMO_ACTOR, at }]),
+    )
   }
 
-  return tasks.map((t) => {
+  for (const t of tasks) {
     const gap = diffDays(t.dueDate, today) // 正數 = 尚未到期
     if (gap < 0) {
-      const recent = -gap <= 45
-      if (recent && DEMO_OPEN_OBLIGATIONS.includes(t.obligationId)) {
-        return { ...t, status: 'IN_PROGRESS', checklist: partial(t, 0.5) }
+      if (-gap <= 45 && DEMO_OPEN_OBLIGATIONS.includes(t.obligationId)) {
+        out[t.id] = { status: 'IN_PROGRESS', checks: checks(t, 0.5, today) }
+      } else {
+        out[t.id] = {
+          status: 'DONE',
+          completedAt: t.dueDate,
+          completedBy: DEMO_ACTOR,
+          checks: checks(t, 1, t.dueDate),
+        }
       }
-      return {
-        ...t,
-        status: 'DONE',
-        completedAt: t.dueDate,
-        completedBy: '示範資料',
-        checklist: t.checklist.map((c) => ({ ...c, checked: true, checkedBy: '示範資料', checkedAt: t.dueDate })),
-      }
+    } else if (gap <= 14) {
+      out[t.id] = { status: 'IN_PROGRESS', checks: checks(t, 0.4, today) }
     }
-    if (gap <= 14) return { ...t, status: 'IN_PROGRESS', checklist: partial(t, 0.4) }
-    return t
-  })
+  }
+  return out
 }

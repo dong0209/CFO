@@ -21,14 +21,14 @@ function riskColor(score: number): string {
 }
 
 export function Risks() {
-  const { state } = useStore()
+  const { workspace, tasks, today } = useStore()
   const inputs = useCheckInputs()
   const checkResults = useMemo(() => {
     const rs = runAllRules(CHECK_RULES, inputs)
     return new Map(rs.map((r) => [r.ruleId, r]))
   }, [inputs])
 
-  const rows = state.risks
+  const rows = workspace.risks
     .map((r) => ({ ...r, score: r.likelihood * r.impact }))
     .sort((a, b) => b.score - a.score)
 
@@ -136,10 +136,10 @@ export function Risks() {
                     {r.linkedObligationIds.map((id) => {
                       const o = OBLIGATION_MAP[id]
                       if (!o) return null
-                      const open = state.tasks
-                        .filter((t) => t.obligationId === id && !['DONE_ON_TIME', 'DONE_LATE', 'NA'].includes(taskHealth(t, state.today)))
+                      const open = tasks
+                        .filter((t) => t.obligationId === id && !['DONE_ON_TIME', 'DONE_LATE', 'NA'].includes(taskHealth(t, today)))
                         .sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1))[0]
-                      const overdue = open ? taskHealth(open, state.today) === 'OVERDUE' : false
+                      const overdue = open ? taskHealth(open, today) === 'OVERDUE' : false
                       return (
                         <div key={id} style={{ marginBottom: 2 }}>
                           {o.title}

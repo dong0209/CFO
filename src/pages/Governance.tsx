@@ -18,8 +18,8 @@ const AGM_MILESTONES = [
 ]
 
 export function Governance() {
-  const { state, dispatch } = useStore()
-  const { profile, holding } = state
+  const { workspace, tasks, today, mutate, canAdmin } = useStore()
+  const { profile, holding } = workspace
 
   const result = useMemo(
     () =>
@@ -33,7 +33,7 @@ export function Governance() {
     [profile, holding],
   )
 
-  const agmTask = state.tasks.find((t) => t.obligationId === 'CMP-AGM')
+  const agmTask = tasks.find((t) => t.obligationId === 'CMP-AGM')
   const agmDate = agmTask?.dueDate
 
   return (
@@ -60,23 +60,23 @@ export function Governance() {
         <div className="grid cols-4" style={{ marginBottom: 12 }}>
           <div className="field" style={{ marginBottom: 0 }}>
             <label>基準日（以停止過戶日股東名簿為準）</label>
-            <input type="date" value={holding.asOf} onChange={(e) => dispatch({ type: 'SET_HOLDING', patch: { asOf: e.target.value } })} />
+            <input type="date" disabled={!canAdmin} value={holding.asOf} onChange={(e) => mutate({ kind: 'holding', patch: { asOf: e.target.value } })} />
           </div>
           <div className="field" style={{ marginBottom: 0 }}>
             <label>每股面額（元）</label>
-            <input type="number" value={holding.parValue} onChange={(e) => dispatch({ type: 'SET_HOLDING', patch: { parValue: Number(e.target.value) } })} />
+            <input type="number" disabled={!canAdmin} value={holding.parValue} onChange={(e) => mutate({ kind: 'holding', patch: { parValue: Number(e.target.value) } })} />
           </div>
           <div className="field" style={{ marginBottom: 0 }}>
             <label>全體董事持有股數</label>
-            <input type="number" value={holding.directorShares} onChange={(e) => dispatch({ type: 'SET_HOLDING', patch: { directorShares: Number(e.target.value) } })} />
+            <input type="number" disabled={!canAdmin} value={holding.directorShares} onChange={(e) => mutate({ kind: 'holding', patch: { directorShares: Number(e.target.value) } })} />
           </div>
           <div className="field" style={{ marginBottom: 0 }}>
             <label>全體監察人持有股數</label>
             <input
               type="number"
               value={holding.supervisorShares}
-              disabled={profile.hasAuditCommittee}
-              onChange={(e) => dispatch({ type: 'SET_HOLDING', patch: { supervisorShares: Number(e.target.value) } })}
+              disabled={profile.hasAuditCommittee || !canAdmin}
+              onChange={(e) => mutate({ kind: 'holding', patch: { supervisorShares: Number(e.target.value) } })}
             />
           </div>
         </div>
@@ -144,7 +144,7 @@ export function Governance() {
               <tbody>
                 {AGM_MILESTONES.map((m) => {
                   const iso = addDays(agmDate, m.offset)
-                  const gap = diffDays(iso, state.today)
+                  const gap = diffDays(iso, today)
                   return (
                     <tr key={m.name}>
                       <td className="mono nowrap">{iso}</td>
@@ -158,7 +158,7 @@ export function Governance() {
             </table>
           </div>
           <p className="small muted" style={{ marginBottom: 0 }}>
-            股東常會任務目前狀態：{taskHealth(agmTask!, state.today) === 'OVERDUE' ? '已逾期' : '尚未到期'}；
+            股東常會任務目前狀態：{taskHealth(agmTask!, today) === 'OVERDUE' ? '已逾期' : '尚未到期'}；
             主辦 {ROLE_NAMES[OBLIGATION_MAP['CMP-AGM'].owner]}。
           </p>
         </div>

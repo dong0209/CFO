@@ -13,18 +13,18 @@ type Filter = 'ALL' | 'OPEN' | 'OVERDUE' | 'DONE'
 const MONTH_NAMES = ['1 月', '2 月', '3 月', '4 月', '5 月', '6 月', '7 月', '8 月', '9 月', '10 月', '11 月', '12 月']
 
 export function Calendar() {
-  const { state, dispatch } = useStore()
+  const { tasks: allTasks, today, workspace, mutate } = useStore()
   const [area, setArea] = useState<FunctionAreaId | 'ALL'>('ALL')
   const [filter, setFilter] = useState<Filter>('ALL')
   const [q, setQ] = useState('')
   const [selected, setSelected] = useState<Task | null>(null)
 
   const rows = useMemo(() => {
-    return state.tasks
+    return allTasks
       .map((t) => {
         const o = OBLIGATION_MAP[t.obligationId]
         const req = new Set(o.checklist.filter((c) => c.required).map((c) => c.id))
-        return { task: t, o, health: taskHealth(t, state.today), progress: checklistProgress(t, req) }
+        return { task: t, o, health: taskHealth(t, today), progress: checklistProgress(t, req) }
       })
       .filter((r) => (area === 'ALL' ? true : r.o.area === area))
       .filter((r) => {
@@ -35,7 +35,7 @@ export function Calendar() {
         return true
       })
       .filter((r) => (q ? (r.o.title + r.o.legalBasis.join('') + r.task.periodLabel).includes(q) : true))
-  }, [state.tasks, state.today, area, filter, q])
+  }, [allTasks, today, area, filter, q])
 
   const byMonth = useMemo(() => {
     const m = new Map<string, typeof rows>()
@@ -51,12 +51,12 @@ export function Calendar() {
     <>
       <div className="page-head">
         <h2>法遵行事曆</h2>
-        <p>依 {state.fiscalYear} 會計年度自動展開 {state.tasks.length} 項定期任務，到期日已完成營業日調整。點選任一列可展開檢核清單。</p>
+        <p>依 {workspace.fiscalYear} 會計年度自動展開 {allTasks.length} 項定期任務，到期日已完成營業日調整。點選任一列可展開檢核清單。</p>
       </div>
 
       <div className="toolbar">
-        <select value={state.fiscalYear} onChange={(e) => dispatch({ type: 'SET_FISCAL_YEAR', year: Number(e.target.value) })}>
-          {[state.fiscalYear - 1, state.fiscalYear, state.fiscalYear + 1].map((y) => (
+        <select value={workspace.fiscalYear} onChange={(e) => mutate({ kind: 'fiscalYear', year: Number(e.target.value) })}>
+          {[workspace.fiscalYear - 1, workspace.fiscalYear, workspace.fiscalYear + 1].map((y) => (
             <option key={y} value={y}>{y} 會計年度</option>
           ))}
         </select>
@@ -106,7 +106,7 @@ export function Calendar() {
                       <tr key={r.task.id} style={{ cursor: 'pointer' }} onClick={() => setSelected(r.task)}>
                         <td className="nowrap mono small">
                           {r.task.dueDate.slice(5)}
-                          <div className="muted" style={{ fontSize: 10 }}>{daysLabel(diffDays(r.task.dueDate, state.today))}</div>
+                          <div className="muted" style={{ fontSize: 10 }}>{daysLabel(diffDays(r.task.dueDate, today))}</div>
                         </td>
                         <td>
                           <AreaPill area={r.o.area} /> {r.o.title}

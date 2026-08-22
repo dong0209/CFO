@@ -6,7 +6,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "dev:server": "npm run build && npm run build:server && node dist-server/index.mjs",
+    "build": "npm run typecheck && vite build && npm run build:server",
+    "build:server": "vite build --config vite.server.config.ts",
+    "build:html": "node scripts/build-single-html.mjs",
+    "start": "node dist-server/index.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -25,5 +29,8 @@
     "typescript": "^5.6.3",
     "vite": "^8.2.2",
     "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

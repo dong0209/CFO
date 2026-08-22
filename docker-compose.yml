@@ -1,0 +1,31 @@
+services:
+  cfo:
+    build: .
+    image: cfo-management-system:latest
+    restart: unless-stopped
+    # 只綁定 127.0.0.1，強制流量必須經過反向代理（由代理負責 TLS）。
+    # 若要直接在內網開放，改為 "8080:8080"，但務必自行處理 TLS。
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - cfo-data:/data
+    environment:
+      CFO_PORT: "8080"
+      CFO_DATA_DIR: /data
+      # 初次啟動時建立管理者；建立後可移除這兩個變數
+      CFO_ADMIN_USER: ${CFO_ADMIN_USER:-}
+      CFO_ADMIN_PASSWORD: ${CFO_ADMIN_PASSWORD:-}
+      CFO_ADMIN_NAME: ${CFO_ADMIN_NAME:-}
+      # 由反向代理終結 TLS 時設為 1：cookie 會帶 Secure，並採信 X-Forwarded-For
+      CFO_TRUST_PROXY: ${CFO_TRUST_PROXY:-0}
+      CFO_SESSION_TTL_HOURS: ${CFO_SESSION_TTL_HOURS:-12}
+      # 0 = 空白工作區（正式導入）；1 = 內建示範資料（教育訓練用）
+      CFO_SEED_DEMO: ${CFO_SEED_DEMO:-0}
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+
+volumes:
+  cfo-data:

@@ -1,0 +1,9 @@
+node_modules
+dist
+dist-server
+dist-single
+data
+.git
+.env
+cfo-console.html
+docs

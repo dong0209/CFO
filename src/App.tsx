@@ -6,6 +6,7 @@ import { Checks } from './pages/Checks'
 import { Governance } from './pages/Governance'
 import { Risks } from './pages/Risks'
 import { Settings } from './pages/Settings'
+import { Login } from './pages/Login'
 import { useStore } from './state/store'
 import { taskHealth } from './engine/health'
 
@@ -30,7 +31,7 @@ function pageFromHash(): PageId {
 
 export default function App() {
   const [page, setPage] = useState<PageId>(pageFromHash)
-  const { state } = useStore()
+  const { phase, mode, user, workspace, tasks, today, syncError, fatalError, readOnly, readOnlyReason } = useStore()
 
   // 以 hash 同步頁面，讓分頁可被書籤/連結引用，瀏覽器上一頁也能運作
   useEffect(() => {
@@ -44,10 +45,25 @@ export default function App() {
     setPage(id)
   }
 
-  const overdue = useMemo(
-    () => state.tasks.filter((t) => taskHealth(t, state.today) === 'OVERDUE').length,
-    [state.tasks, state.today],
-  )
+  const overdue = useMemo(() => tasks.filter((t) => taskHealth(t, today) === 'OVERDUE').length, [tasks, today])
+
+  if (phase === 'loading') {
+    return <div className="boot">載入中…</div>
+  }
+  if (phase === 'login') {
+    return <Login />
+  }
+  if (phase === 'error') {
+    return (
+      <div className="boot">
+        <div className="card" style={{ maxWidth: 460 }}>
+          <h3>系統無法載入</h3>
+          <p className="small">{fatalError}</p>
+          <button className="btn" onClick={() => location.reload()}>重新載入</button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="app">
@@ -65,16 +81,23 @@ export default function App() {
             </button>
           ))}
         </div>
-        <p className="small muted" style={{ padding: '12px 10px 0', borderTop: '1px solid var(--border)', marginTop: 12 }}>
-          {state.profile.name}
+        <div className="small muted" style={{ padding: '12px 10px 0', borderTop: '1px solid var(--border)', marginTop: 12 }}>
+          {workspace.profile.name}
           <br />
-          {state.fiscalYear} 會計年度
+          {workspace.fiscalYear} 會計年度
           <br />
-          基準日 {state.today}
-        </p>
+          基準日 {today}
+          <div style={{ marginTop: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            <span className="pill ghost">{mode === 'server' ? '伺服器模式' : '本機模式'}</span>
+            {user && <span className="pill ghost">{user.displayName}</span>}
+            {readOnly && <span className="pill" style={{ background: 'rgba(220,38,38,.12)', color: 'var(--fail)' }}>唯讀</span>}
+          </div>
+        </div>
       </nav>
 
       <main className="main">
+        {syncError && <div className="banner fail">同步問題：{syncError}</div>}
+        {readOnlyReason && <div className="banner info">{readOnlyReason}</div>}
         {page === 'dashboard' && <Dashboard />}
         {page === 'calendar' && <Calendar />}
         {page === 'checks' && <Checks />}
