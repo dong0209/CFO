@@ -71,6 +71,13 @@ struct ToolPalette: View {
                 .toggleStyle(.checkbox)
         }
         if tools.tool.usesFontSize {
+            FontFamilyPicker(family: $tools.fontFamily)
+                .labelsHidden()
+                .frame(width: 170)
+                .onChange(of: tools.fontFamily) { _ in tools.fontFace = nil }
+            FontFacePicker(family: tools.fontFamily, face: $tools.fontFace)
+                .labelsHidden()
+                .frame(width: 100)
             Stepper(value: $tools.fontSize, in: 6...96, step: 1) {
                 Text("字級 \(Int(tools.fontSize))").monospacedDigit()
             }

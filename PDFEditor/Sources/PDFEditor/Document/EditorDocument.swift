@@ -94,9 +94,6 @@ final class EditorDocument: ObservableObject, Identifiable {
         let previous = annotation.contents ?? ""
         let previousBounds = annotation.bounds
         annotation.contents = contents
-        if annotation.isType(.freeText) {
-            annotation.bounds = Self.freeTextBounds(for: contents, font: annotation.font, origin: CGPoint(x: previousBounds.minX, y: previousBounds.maxY))
-        }
         registerUndo("編輯文字") { document in
             document.setContents(previous, of: annotation)
             annotation.bounds = previousBounds
@@ -155,37 +152,31 @@ final class EditorDocument: ObservableObject, Identifiable {
         addAnnotation(annotation, to: page, actionName: "便利貼")
     }
 
-    static func freeTextBounds(for text: String, font: NSFont?, origin topLeft: CGPoint) -> CGRect {
-        let font = font ?? TextDrawing.font(size: 14, bold: false)
-        let measured = (text as NSString).boundingRect(
-            with: CGSize(width: 400, height: 10_000),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            attributes: [.font: font]
-        )
-        let size = CGSize(width: ceil(measured.width) + 12, height: ceil(measured.height) + 8)
-        return CGRect(x: topLeft.x, y: topLeft.y - size.height, width: size.width, height: size.height)
+    /// 新增文字方塊（左上角對齊點選位置）。
+    func addTextBox(_ text: String, font: NSFont, color: NSColor, at topLeft: CGPoint, on page: PDFPage) {
+        guard !text.isEmpty else { return }
+        addAnnotation(FreeTextStyle.make(text: text, font: font, color: color, topLeft: topLeft), to: page, actionName: "文字方塊")
     }
 
-    func addTextBox(at point: CGPoint, on page: PDFPage, color: NSColor, fontSize: CGFloat) {
-        guard let text = Panels.promptText(title: "新增文字", message: "輸入要加入頁面的文字：", multiline: true),
-              !text.isEmpty else { return }
-        let font = TextDrawing.font(size: fontSize, bold: false)
-        let bounds = Self.freeTextBounds(for: text, font: font, origin: point)
-        let annotation = PDFAnnotation(bounds: bounds, forType: .freeText, withProperties: nil)
-        annotation.contents = text
-        annotation.font = font
-        annotation.fontColor = color
-        annotation.color = .clear
-        annotation.alignment = .left
-        let border = PDFBorder()
-        border.lineWidth = 0
-        annotation.border = border
-        addAnnotation(annotation, to: page, actionName: "文字方塊")
+    /// 修改文字方塊的內容、字型與顏色（可復原）。
+    func restyleTextBox(_ annotation: PDFAnnotation, text: String, font: NSFont, color: NSColor) {
+        let previous = (text: annotation.contents ?? "", font: annotation.font ?? font, color: annotation.fontColor ?? .black, bounds: annotation.bounds)
+        FreeTextStyle.apply(text: text, font: font, color: color, to: annotation)
+        registerUndo("編輯文字") { document in
+            document.restyleTextBox(annotation, text: previous.text, font: previous.font, color: previous.color)
+            annotation.bounds = previous.bounds
+        }
+        refresh(annotation.page)
+        markChanged()
     }
 
+    /// 雙擊註解：文字方塊開啟文字樣式對話框，便利貼則直接編輯內容。
     func editText(of annotation: PDFAnnotation) {
-        let title = annotation.isType(.freeText) ? "編輯文字" : "編輯備註"
-        guard let text = Panels.promptText(title: title, initial: annotation.contents ?? "", multiline: true) else { return }
+        if annotation.isType(.freeText), let page = annotation.page {
+            Workspace.shared.textBoxRequest = TextBoxRequest(page: page, point: nil, annotation: annotation)
+            return
+        }
+        guard let text = Panels.promptText(title: "編輯備註", initial: annotation.contents ?? "", multiline: true) else { return }
         setContents(text, of: annotation)
     }
 

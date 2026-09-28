@@ -76,7 +76,7 @@ final class EditorPDFView: PDFView {
             editor.addNote(at: point, on: page, color: tools.nsColor)
 
         case .textBox:
-            editor.addTextBox(at: point, on: page, color: tools.nsColor, fontSize: tools.fontSize)
+            Workspace.shared.textBoxRequest = TextBoxRequest(page: page, point: point, annotation: nil)
 
         case .image, .signature:
             if let image = tools.pendingImage {

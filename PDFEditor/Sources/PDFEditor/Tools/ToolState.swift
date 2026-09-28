@@ -1,4 +1,5 @@
 import AppKit
+import PDFEditorCore
 import SwiftUI
 
 enum Tool: String, CaseIterable, Identifiable {
@@ -118,6 +119,13 @@ final class ToolState: ObservableObject {
     @Published var color: Color = .black
     @Published var lineWidth: CGFloat = 2
     @Published var fontSize: CGFloat = 14
+    /// 文字方塊使用的字族與樣式（PostScript 名稱；nil 代表一般樣式）
+    @Published var fontFamily: String = UserDefaults.standard.string(forKey: "TextFontFamily") ?? FontCatalog.defaultFamily {
+        didSet { UserDefaults.standard.set(fontFamily, forKey: "TextFontFamily") }
+    }
+    @Published var fontFace: String? = UserDefaults.standard.string(forKey: "TextFontFace") {
+        didSet { UserDefaults.standard.set(fontFace, forKey: "TextFontFace") }
+    }
     @Published var fillShapes = false
 
     /// 圖片／簽名工具下一次點擊要放置的影像。
@@ -126,6 +134,16 @@ final class ToolState: ObservableObject {
     private var keepsColorOnToolChange = false
 
     var nsColor: NSColor { NSColor(color) }
+
+    var textFont: NSFont { FontCatalog.font(family: fontFamily, face: fontFace, size: fontSize) }
+
+    /// 記住最後使用的文字樣式，作為下次新增文字的預設值。
+    func rememberTextStyle(family: String, face: String?, size: CGFloat, color: NSColor) {
+        fontFamily = family
+        fontFace = face
+        fontSize = size
+        self.color = Color(nsColor: color)
+    }
 
     func select(_ tool: Tool) {
         self.tool = tool

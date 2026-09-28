@@ -196,3 +196,45 @@ final class ExportTests: XCTestCase {
         XCTAssertEqual(PDFDocument(url: url)?.pageCount, 2)
     }
 }
+
+final class FontTests: XCTestCase {
+    func testCatalogListsInstalledFonts() {
+        let (recommended, others) = FontCatalog.groupedFamilies()
+        XCTAssertFalse(recommended.isEmpty, "至少應有一個常用字型")
+        XCTAssertTrue(recommended.contains { $0.name == "Helvetica" } || recommended.contains { $0.name == "PingFang TC" })
+        XCTAssertTrue(Set(recommended.map(\.name)).isDisjoint(with: others.map(\.name)), "常用與其他字型不應重複")
+        XCTAssertFalse(FontCatalog.faces(of: "Helvetica").isEmpty)
+    }
+
+    func testFontLookupFallsBack() {
+        let bold = FontCatalog.font(family: "Helvetica", face: "Helvetica-Bold", size: 20)
+        XCTAssertEqual(bold.fontName, "Helvetica-Bold")
+        XCTAssertEqual(bold.pointSize, 20)
+        let regular = FontCatalog.font(family: "Helvetica", face: nil, size: 12)
+        XCTAssertEqual(regular.familyName, "Helvetica")
+        let missing = FontCatalog.font(family: "不存在的字型", face: "NoSuchFont", size: 12)
+        XCTAssertEqual(missing.pointSize, 12)
+    }
+
+    func testFreeTextKeepsTopLeftAndFontAfterSave() throws {
+        let document = PDFDocument()
+        let page = PageOperations.blankPage()
+        document.insert(page, at: 0)
+        let font = FontCatalog.font(family: "Times New Roman", face: nil, size: 18)
+        let annotation = FreeTextStyle.make(text: "Hello", font: font, color: .red, topLeft: CGPoint(x: 100, y: 700))
+        XCTAssertEqual(annotation.bounds.maxY, 700, accuracy: 0.01)
+        page.addAnnotation(annotation)
+
+        let bigger = FontCatalog.font(family: "Helvetica", face: "Helvetica-Bold", size: 36)
+        FreeTextStyle.apply(text: "Hello\n第二行", font: bigger, color: .blue, to: annotation)
+        XCTAssertEqual(annotation.bounds.minX, 100, accuracy: 0.01)
+        XCTAssertEqual(annotation.bounds.maxY, 700, accuracy: 0.01)
+        XCTAssertGreaterThan(annotation.bounds.height, 80)
+
+        let reopened = try XCTUnwrap(document.dataRepresentation().flatMap(PDFDocument.init(data:)))
+        let saved = try XCTUnwrap(reopened.page(at: 0)?.annotations.first { $0.isType(.freeText) })
+        XCTAssertEqual(saved.contents, "Hello\n第二行")
+        XCTAssertEqual(saved.font?.fontName, "Helvetica-Bold")
+        XCTAssertEqual(saved.font?.pointSize ?? 0, 36, accuracy: 0.5)
+    }
+}

@@ -32,6 +32,14 @@ enum SidebarTab: String, CaseIterable, Identifiable {
     }
 }
 
+/// 新增（point）或編輯（annotation）文字方塊的要求。
+struct TextBoxRequest: Identifiable {
+    let id = UUID()
+    let page: PDFPage
+    let point: CGPoint?
+    let annotation: PDFAnnotation?
+}
+
 struct ProgressState: Equatable {
     var title: String
     var completed: Int
@@ -48,6 +56,7 @@ final class Workspace: ObservableObject {
     @Published var currentID: UUID?
     @Published var activeSheet: SheetKind?
     @Published var progress: ProgressState?
+    @Published var textBoxRequest: TextBoxRequest?
     @Published private(set) var recentURLs: [URL] = []
     @Published var showSidebar = true
     @Published var sidebarTab: SidebarTab = .thumbnails

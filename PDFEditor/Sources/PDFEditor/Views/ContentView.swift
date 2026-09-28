@@ -180,6 +180,9 @@ struct EditorView: View {
             Divider()
             StatusBar(document: document)
         }
+        .sheet(item: $workspace.textBoxRequest) { request in
+            TextBoxSheet(request: request, document: document)
+        }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 Button {
