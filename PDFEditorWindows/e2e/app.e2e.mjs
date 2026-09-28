@@ -142,6 +142,19 @@ try {
   await page.waitForTimeout(500);
   assert.equal(await annotationCount(), 4);
 
+  step("直接編輯原有文字");
+  await page.keyboard.press("t");
+  box = await pageBox(0);
+  // 標題「Page 1」基線約在 y≈102
+  await page.mouse.click(...box.at(110, 94));
+  const inline = page.locator(".inline-text-editor");
+  await inline.waitFor();
+  assert.equal(await inline.inputValue(), "Page 1");
+  await shot("02a-直接編輯文字");
+  await inline.fill("第一章 Chapter 1");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(600);
+
   step("填寫表單欄位");
   await page.keyboard.press("v");
   const widget = page.locator(".widget-text").first();
@@ -213,6 +226,8 @@ try {
     assert.equal(p1.getWidgets()[0].getValue(), "王小明");
     const text = p1.toStructuredText("").asText();
     assert.ok(text.includes("機密文件"), "浮水印文字應存在");
+    assert.ok(text.includes("第一章 Chapter 1"), "標題應已直接改寫");
+    assert.ok(!text.includes("Page 1"), "原標題文字應被移除");
     assert.ok(text.includes("第 1 頁，共 3 頁"), "頁碼應存在");
     assert.equal(doc.loadPage(2).getObject().get("Rotate").asNumber(), 90, "第三頁應已旋轉");
   }

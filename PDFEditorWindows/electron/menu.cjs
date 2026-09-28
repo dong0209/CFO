@@ -3,6 +3,7 @@ const { Menu } = require("electron");
 
 const TOOLS = [
   ["select", "選取", "V"],
+  ["edittext", "編輯文字", "T"],
   ["highlight", "螢光筆", "Y"],
   ["underline", "底線", "U"],
   ["strikeout", "刪除線", "K"],

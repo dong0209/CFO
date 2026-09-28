@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { DocInfo, Quad, SaveOptions, SearchHit } from "../engine/types";
 
 export type Tool =
-  | "select" | "highlight" | "underline" | "strikeout"
+  | "select" | "edittext" | "highlight" | "underline" | "strikeout"
   | "note" | "textbox" | "ink"
   | "rectangle" | "ellipse" | "line" | "arrow"
   | "whiteout" | "redact" | "image" | "signature" | "eraser";

@@ -1,10 +1,10 @@
 import * as mupdf from "mupdf";
-import { centeredOrigin, concat, inflate, invert, normalizeRect, pointsBounds, quadBounds, rectsIntersect, stampOrigin, textMatrix } from "./geometry";
+import { centeredOrigin, concat, inflate, invert, normalizeRect, pointsBounds, quadBounds, rectContains, rectsIntersect, stampOrigin, textMatrix, transformPoint } from "./geometry";
 import { chunk, moveItems, renderPageNumber } from "./pageRanges";
 import type {
   AnnotInfo, DocInfo, ImageFormat, LinkInfo, MarkupKind, Matrix, OcrLine, OpenResult, OutlineNode,
   PageInfo, PageNumberOptions, Point, Quad, Rect, RenderResult, RGB, SaveOptions, SearchHit, ShapeKind,
-  TextSelection, WatermarkOptions, WidgetInfo, WidgetKind,
+  TextLine, TextSelection, WatermarkOptions, WidgetInfo, WidgetKind,
 } from "./types";
 
 type OutlineItems = NonNullable<ReturnType<mupdf.PDFDocument["loadOutline"]>>;
@@ -587,7 +587,7 @@ export class PdfEngine {
         if (!contents.isArray()) continue;
         for (let k = contents.length - 1; k >= 0; k--) {
           const role = contents.get(k).get(STAMP_KEY);
-          if (role.isName() && role.asName() !== "ocr") {
+          if (role.isName() && role.asName() !== "ocr" && role.asName() !== "edit") {
             contents.delete(k);
             removed++;
           }
@@ -615,29 +615,33 @@ export class PdfEngine {
     });
   }
 
-  private latinFont: mupdf.Font | null = null;
+  private latinFonts = new Map<string, mupdf.Font>();
 
   private font(): mupdf.Font {
     this.cjkFont ??= new mupdf.Font("zh-Hant");
     return this.cjkFont;
   }
 
-  private helvetica(): mupdf.Font {
-    this.latinFont ??= new mupdf.Font("Helvetica");
-    return this.latinFont;
+  private latin(name: LatinFont): mupdf.Font {
+    let font = this.latinFonts.get(name);
+    if (!font) {
+      font = new mupdf.Font(name);
+      this.latinFonts.set(name, font);
+    }
+    return font;
   }
 
   /**
-   * 將文字分成英數字（Helvetica，閱讀器皆內建正確字寬）與其他字元（中文字型，每字 1em）。
+   * 將文字分成英數字（標準 14 字型，閱讀器皆內建正確字寬）與其他字元（中文字型，每字 1em）。
    * 未內嵌的中文字型沒有個別字寬，英數字若用它會被當成全形寬度。
    */
-  private textRuns(text: string): Array<{ latin: boolean; text: string; width: number }> {
+  private textRuns(text: string, latinName: LatinFont = "Helvetica"): Array<{ latin: boolean; text: string; width: number }> {
     const runs: Array<{ latin: boolean; text: string; width: number }> = [];
-    const helv = this.helvetica();
+    const latinFont = this.latin(latinName);
     for (const ch of text) {
       const code = ch.codePointAt(0) ?? 0;
       const latin = code >= 0x20 && code <= 0x7e;
-      const width = latin ? helv.advanceGlyph(helv.encodeCharacter(ch)) : 1;
+      const width = latin ? latinFont.advanceGlyph(latinFont.encodeCharacter(ch)) : 1;
       const last = runs[runs.length - 1];
       if (last && last.latin === latin) {
         last.text += ch;
@@ -650,8 +654,8 @@ export class PdfEngine {
   }
 
   /** 以 em 為單位的文字寬度。 */
-  textWidth(text: string): number {
-    return this.textRuns(text).reduce((sum, run) => sum + run.width, 0);
+  textWidth(text: string, latinName: LatinFont = "Helvetica"): number {
+    return this.textRuns(text, latinName).reduce((sum, run) => sum + run.width, 0);
   }
 
   /** 在頁面內容最上層加入文字（位置以頁面座標的文字矩陣表示）。 */
@@ -663,12 +667,15 @@ export class PdfEngine {
     opacity: number,
     invisible: boolean,
     role: string,
+    style: TextStyle = { latin: "Helvetica", cjkSerif: false },
   ) {
     const pageObj = page.getObject();
     const resources = ensureDict(doc, pageObj, "Resources", true);
     const fonts = ensureDict(doc, resources, "Font");
-    if (fonts.get("PEFont").isNull()) fonts.put("PEFont", doc.addCJKFont(this.font(), "zh-Hant"));
-    if (fonts.get("PEHelv").isNull()) fonts.put("PEHelv", doc.addSimpleFont(this.helvetica(), "Latin"));
+    const cjkName = style.cjkSerif ? "PEFontSerif" : "PEFont";
+    if (fonts.get(cjkName).isNull()) fonts.put(cjkName, doc.addCJKFont(this.font(), "zh-Hant", 0, style.cjkSerif));
+    const latinName = `PE${style.latin.replace(/-/g, "")}`;
+    if (fonts.get(latinName).isNull()) fonts.put(latinName, doc.addSimpleFont(this.latin(style.latin), "Latin"));
     const states = ensureDict(doc, resources, "ExtGState");
     const gsName = `PEGS${Math.round(opacity * 100)}`;
     if (states.get(gsName).isNull()) states.put(gsName, { Type: doc.newName("ExtGState"), ca: opacity, CA: opacity });
@@ -678,8 +685,8 @@ export class PdfEngine {
     for (const run of runs) {
       const m = concat(run.matrix, toUser);
       ops.push(`${m.map(fmt).join(" ")} Tm`);
-      for (const part of this.textRuns(run.text)) {
-        ops.push(part.latin ? `/PEHelv 1 Tf (${escapePdfString(part.text)}) Tj` : `/PEFont 1 Tf <${utf16Hex(part.text)}> Tj`);
+      for (const part of this.textRuns(run.text, style.latin)) {
+        ops.push(part.latin ? `/${latinName} 1 Tf (${escapePdfString(part.text)}) Tj` : `/${cjkName} 1 Tf <${utf16Hex(part.text)}> Tj`);
       }
     }
     ops.push("ET Q");
@@ -689,6 +696,93 @@ export class PdfEngine {
     const contents = pageObj.get("Contents");
     if (contents.isArray()) contents.push(stream);
     else pageObj.put("Contents", [contents, stream]);
+  }
+
+  // MARK: - 直接編輯文字
+
+  /** 頁面上的水平文字行，含字型、字級、顏色與基線位置。 */
+  textLines(id: number, pageIndex: number): TextLine[] {
+    const page = this.page(id, pageIndex);
+    const toUser = invert(page.getTransform() as Matrix);
+    const raw: Array<{ bbox: Rect; horizontal: boolean; chars: Array<{ c: string; origin: Point; font: mupdf.Font; size: number; color: number[] }> }> = [];
+    page.toStructuredText("preserve-whitespace").walk({
+      beginLine(bbox, _wmode, direction) {
+        raw.push({ bbox: bbox as Rect, horizontal: Math.abs(direction[1]) < 0.01 && direction[0] > 0, chars: [] });
+      },
+      onChar(c, origin, font, size, _quad, color) {
+        raw[raw.length - 1]?.chars.push({ c, origin: origin as Point, font, size, color: color as number[] });
+      },
+    });
+    const lines: TextLine[] = [];
+    for (const line of raw) {
+      const text = line.chars.map((ch) => ch.c).join("");
+      if (!line.horizontal || !text.trim()) continue;
+      const first = line.chars.find((ch) => ch.c.trim()) ?? line.chars[0];
+      const name = first.font.getName();
+      const bold = first.font.isBold() || /bold|black|heavy|semibold|demi|w[6-9]/i.test(name);
+      const italic = first.font.isItalic() || /italic|oblique/i.test(name);
+      const mono = first.font.isMono() || /courier|mono|consol/i.test(name);
+      const serif = !mono && (first.font.isSerif() || /times|serif|roman|georgia|garamond|song|ming|明|宋|kai|楷/i.test(name)) && !/sans/i.test(name);
+      const origin = line.chars[0].origin;
+      lines.push({
+        index: lines.length,
+        text: text.replace(/\s+$/, ""),
+        bbox: line.bbox,
+        origin,
+        userBBox: transformRect(line.bbox, toUser),
+        userOrigin: transformPoint(origin, toUser),
+        fontName: name.replace(/^[A-Z]{6}\+/, ""),
+        size: Math.round(first.size * 100) / 100,
+        bold,
+        italic,
+        serif,
+        mono,
+        color: toRgb(first.color),
+      });
+    }
+    // 依版面位置排序（由上而下、由左而右），不受內容串流順序影響
+    lines.sort((a, b) => (Math.abs(a.origin[1] - b.origin[1]) > 2 ? a.origin[1] - b.origin[1] : a.origin[0] - b.origin[0]));
+    lines.forEach((line, i) => (line.index = i));
+    return lines;
+  }
+
+  /** 找出包含頁面座標（y 向下）某點的文字行。 */
+  textLineAt(id: number, pageIndex: number, point: Point): TextLine | null {
+    const lines = this.textLines(id, pageIndex);
+    const hit = lines.find((l) => rectContains(inflate(l.bbox, 2), point));
+    return hit ?? null;
+  }
+
+  /** 以 PDF 使用者座標（原點在左下，與 macOS PDFKit 相同）找出文字行。 */
+  textLineAtUserPoint(id: number, pageIndex: number, point: Point): TextLine | null {
+    const page = this.page(id, pageIndex);
+    return this.textLineAt(id, pageIndex, transformPoint(point, page.getTransform() as Matrix));
+  }
+
+  /**
+   * 直接修改一行文字：真正移除原本的字形（背景、圖片與線條保留），再以相近字型在同一基線寫入新文字。
+   * `newText` 為空字串時等於刪除這一行。
+   */
+  replaceTextLine(id: number, pageIndex: number, lineIndex: number, newText: string, override: Partial<Pick<TextLine, "size" | "color" | "bold" | "italic" | "serif" | "mono">> = {}): void {
+    const line = this.textLines(id, pageIndex)[lineIndex];
+    if (!line) throw new Error("找不到要編輯的文字行");
+    const style = { ...line, ...override };
+    this.op(id, "編輯文字", (doc) => {
+      const page = this.load(doc, pageIndex);
+      const [x0, y0, x1, y1] = line.bbox;
+      const inset = (y1 - y0) * 0.2;
+      const redact = page.createAnnotation("Redact");
+      redact.setRect([x0, y0 + inset, x1, y1 - inset]);
+      redact.update();
+      redact.applyRedaction(0, mupdf.PDFPage.REDACT_IMAGE_NONE, mupdf.PDFPage.REDACT_LINE_ART_NONE, mupdf.PDFPage.REDACT_TEXT_REMOVE);
+      const text = newText.replace(/\s+$/, "");
+      if (text) {
+        this.appendText(doc, page, [{ text, matrix: textMatrix(line.origin, style.size) }], style.color, 1, false, "edit", {
+          latin: latinFontFor(style),
+          cjkSerif: style.serif,
+        });
+      }
+    });
   }
 
   // MARK: - 遮蓋、平面化
@@ -805,6 +899,38 @@ export class PdfEngine {
 }
 
 // MARK: - 輔助函式
+
+type LatinFont =
+  | "Helvetica" | "Helvetica-Bold" | "Helvetica-Oblique" | "Helvetica-BoldOblique"
+  | "Times-Roman" | "Times-Bold" | "Times-Italic" | "Times-BoldItalic"
+  | "Courier" | "Courier-Bold" | "Courier-Oblique" | "Courier-BoldOblique";
+
+interface TextStyle {
+  latin: LatinFont;
+  cjkSerif: boolean;
+}
+
+/** 依原字型特徵挑選最接近的標準字型。 */
+export function latinFontFor({ bold, italic, serif, mono }: { bold: boolean; italic: boolean; serif: boolean; mono: boolean }): LatinFont {
+  if (mono) return bold ? (italic ? "Courier-BoldOblique" : "Courier-Bold") : italic ? "Courier-Oblique" : "Courier";
+  if (serif) return bold ? (italic ? "Times-BoldItalic" : "Times-Bold") : italic ? "Times-Italic" : "Times-Roman";
+  return bold ? (italic ? "Helvetica-BoldOblique" : "Helvetica-Bold") : italic ? "Helvetica-Oblique" : "Helvetica";
+}
+
+function toRgb(color: number[]): RGB {
+  if (color.length >= 4) {
+    const [c, m, y, k] = color;
+    return [(1 - c) * (1 - k), (1 - m) * (1 - k), (1 - y) * (1 - k)];
+  }
+  if (color.length === 3) return [color[0], color[1], color[2]];
+  if (color.length === 1) return [color[0], color[0], color[0]];
+  return [0, 0, 0];
+}
+
+function transformRect([x0, y0, x1, y1]: Rect, m: Matrix): Rect {
+  const points = [[x0, y0], [x1, y0], [x0, y1], [x1, y1]].map((p) => transformPoint(p as Point, m));
+  return pointsBounds(points);
+}
 
 function fmt(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");

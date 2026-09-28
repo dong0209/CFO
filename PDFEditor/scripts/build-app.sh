@@ -27,6 +27,14 @@ cp "$BIN_DIR/PDFEditor" "$APP/Contents/MacOS/PDFEditor"
 sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$BUILD_NUMBER/" Resources/Info.plist > "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
+echo "▸ 加入文字編輯引擎"
+ENGINE_DIR="${ENGINE_DIR:-../PDFEditorWindows/dist-mac-engine}"
+if [[ ! -f "$ENGINE_DIR/index.html" ]]; then
+  echo "  尚未建置，執行 npm run build:mac-engine（需要 Node.js）"
+  (cd ../PDFEditorWindows && npm ci && npm run build:mac-engine)
+fi
+cp -R "$ENGINE_DIR" "$APP/Contents/Resources/Engine"
+
 echo "▸ 產生圖示"
 ICONSET="$OUT/AppIcon.iconset"
 rm -rf "$ICONSET"

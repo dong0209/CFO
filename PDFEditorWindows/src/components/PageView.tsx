@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { inflate, normalizeRect, rectContains } from "../engine/geometry";
-import type { AnnotInfo, LinkInfo, MarkupKind, Point, Quad, Rect, ShapeKind, WidgetInfo } from "../engine/types";
+import type { AnnotInfo, LinkInfo, MarkupKind, Point, Quad, Rect, ShapeKind, TextLine, WidgetInfo } from "../engine/types";
 import { api } from "../lib/api";
 import { engine } from "../lib/engine";
 import { goToPage, mutate, selectTool } from "../state/actions";
-import { type DocTab, hexToRgb, setState, updateTab, useStore } from "../state/store";
+import { type DocTab, hexToRgb, rgbToHex, setState, updateTab, useStore } from "../state/store";
 import { prompt } from "./Modal";
 import { openSignatures } from "./dialogs/SignatureDialog";
 
@@ -38,6 +38,8 @@ export function PageView({ tab, pageIndex, scale }: Props) {
   const [annots, setAnnots] = useState<AnnotInfo[]>([]);
   const [widgets, setWidgets] = useState<WidgetInfo[]>([]);
   const [links, setLinks] = useState<LinkInfo[]>([]);
+  const [textLines, setTextLines] = useState<TextLine[]>([]);
+  const [editingLine, setEditingLine] = useState<TextLine | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [loaded, setLoaded] = useState(false);
   const info = tab.info.pages[pageIndex];
@@ -71,6 +73,19 @@ export function PageView({ tab, pageIndex, scale }: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engineId, pageIndex, revision, scale, info.width, info.height]);
+
+  // 編輯文字工具：讀取頁面上的文字行
+  useEffect(() => {
+    if (tool !== "edittext") {
+      setEditingLine(null);
+      return;
+    }
+    let cancelled = false;
+    engine.textLines(engineId, pageIndex).then((lines) => !cancelled && setTextLines(lines)).catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [engineId, pageIndex, revision, tool]);
 
   // 註解、表單與連結
   useEffect(() => {
@@ -113,6 +128,13 @@ export function PageView({ tab, pageIndex, scale }: Props) {
     updateTab(tab.key, { currentPage: pageIndex });
 
     switch (tool) {
+      case "edittext": {
+        // 阻止後續的 mousedown 把焦點從剛出現的編輯框移走
+        e.preventDefault();
+        const line = textLines.find((l) => rectContains(inflate(l.bbox, 2), p));
+        setEditingLine(line ?? null);
+        return;
+      }
       case "select": {
         const hit = topAnnot(p, (a) => MOVABLE.has(a.type));
         if (hit) {
@@ -261,7 +283,7 @@ export function PageView({ tab, pageIndex, scale }: Props) {
   const selected = tab.selectedAnnot?.page === pageIndex ? annots.find((a) => a.id === tab.selectedAnnot!.id) : undefined;
   const hits = tab.searchHits.map((hit, index) => ({ hit, index })).filter(({ hit }) => hit.page === pageIndex);
   const textSelection = tab.textSelection?.page === pageIndex ? tab.textSelection : null;
-  const hover = tool === "select" ? "default" : tool === "eraser" ? "not-allowed" : ["highlight", "underline", "strikeout"].includes(tool) ? "text" : "crosshair";
+  const hover = tool === "edittext" ? "text" : tool === "select" ? "default" : tool === "eraser" ? "not-allowed" : ["highlight", "underline", "strikeout"].includes(tool) ? "text" : "crosshair";
 
   return (
     <div className="page" style={{ width, height }}>
@@ -303,6 +325,23 @@ export function PageView({ tab, pageIndex, scale }: Props) {
           {drag?.kind === "shape" && <ShapePreview drag={drag} scale={scale} color={color} lineWidth={lineWidth} fill={fillShapes} />}
         </svg>
         {tool === "select" && widgets.map((w) => <WidgetField key={w.id} widget={w} scale={scale} tab={tab} />)}
+        {tool === "edittext" &&
+          textLines.map((line) => (
+            <div key={line.index} className="edit-line" style={boxStyle(line.bbox, scale)} title={`${line.fontName} ${line.size}pt`} />
+          ))}
+        {editingLine && (
+          <InlineTextEditor
+            key={`${revision}-${editingLine.index}`}
+            line={editingLine}
+            scale={scale}
+            onDone={async (value) => {
+              setEditingLine(null);
+              if (value !== null && value !== editingLine.text) {
+                await mutate("無法修改文字", () => engine.replaceTextLine(engineId, pageIndex, editingLine.index, value));
+              }
+            }}
+          />
+        )}
       </div>
     </div>
   );
@@ -372,4 +411,56 @@ function WidgetField({ widget, scale, tab }: { widget: WidgetInfo; scale: number
     onBlur: () => value !== widget.value && commit(value),
   };
   return widget.multiline ? <textarea {...props} /> : <input {...props} onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} />;
+}
+
+function boxStyle([x0, y0, x1, y1]: Rect, scale: number): React.CSSProperties {
+  return { left: x0 * scale, top: y0 * scale, width: (x1 - x0) * scale, height: (y1 - y0) * scale };
+}
+
+/** 在原文位置直接輸入新文字；外觀盡量貼近原字型、字級與顏色。 */
+function InlineTextEditor({ line, scale, onDone }: { line: TextLine; scale: number; onDone: (value: string | null) => void }) {
+  const [value, setValue] = useState(line.text);
+  const finished = useRef(false);
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+  const finish = (result: string | null) => {
+    if (finished.current) return;
+    finished.current = true;
+    onDone(result);
+  };
+  const [x0, y0, x1, y1] = line.bbox;
+  const fontSize = line.size * scale;
+  const family = line.mono ? '"Courier New", monospace' : line.serif ? '"Times New Roman", "PMingLiU", "MingLiU", serif' : 'Arial, "Microsoft JhengHei", sans-serif';
+  const width = Math.max((x1 - x0) * scale, value.length * fontSize * 0.62) + fontSize;
+  return (
+    <input
+      ref={ref}
+      className="inline-text-editor"
+      value={value}
+      spellCheck={false}
+      style={{
+        left: x0 * scale - 3,
+        top: y0 * scale - 2,
+        width,
+        height: (y1 - y0) * scale + 4,
+        fontSize,
+        fontFamily: family,
+        fontWeight: line.bold ? 700 : 400,
+        fontStyle: line.italic ? "italic" : "normal",
+        color: rgbToHex(line.color),
+      }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onChange={(e) => setValue(e.target.value)}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.nativeEvent.isComposing) return;
+        if (e.key === "Enter") finish(value);
+        else if (e.key === "Escape") finish(null);
+      }}
+      onBlur={() => finish(value)}
+    />
+  );
 }

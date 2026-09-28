@@ -126,3 +126,23 @@ export interface SaveOptions {
 }
 
 export type ImageFormat = "png" | "jpeg";
+
+/** 可直接編輯的文字行 */
+export interface TextLine {
+  index: number;
+  text: string;
+  /** 頁面座標（y 向下） */
+  bbox: Rect;
+  /** 基線起點（頁面座標） */
+  origin: Point;
+  /** PDF 使用者座標（y 向上，未旋轉；與 macOS PDFKit 相同） */
+  userBBox: Rect;
+  userOrigin: Point;
+  fontName: string;
+  size: number;
+  bold: boolean;
+  italic: boolean;
+  serif: boolean;
+  mono: boolean;
+  color: RGB;
+}

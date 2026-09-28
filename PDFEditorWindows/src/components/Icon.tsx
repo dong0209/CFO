@@ -23,6 +23,7 @@ const PATHS: Record<string, string> = {
   print: "M7 9V3h10v6M7 17H4V9h16v8h-3M7 14h10v7H7z",
   close: "M6 6l12 12M18 6 6 18",
   cursor: "M5 3l14 8-6 2-3 6z",
+  "edit-text": "M4 6h10M9 6v13M7 19h4M18 7v13M16 7h4M16 20h4",
   highlighter: "M14 4l6 6-8 8H6v-6zM4 20h8",
   underline: "M7 4v7a5 5 0 0 0 10 0V4M5 20h14",
   strikethrough: "M4 12h16M16 6c-1-1.5-2.5-2-4-2-2.5 0-4 1.5-4 3.5M8 18c1 1.5 2.5 2 4 2 2.5 0 4-1.5 4-3.5",

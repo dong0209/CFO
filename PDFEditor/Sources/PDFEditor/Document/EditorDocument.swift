@@ -7,7 +7,7 @@ import SwiftUI
 @MainActor
 final class EditorDocument: ObservableObject, Identifiable {
     let id = UUID()
-    let pdf: PDFDocument
+    @Published private(set) var pdf: PDFDocument
     let undoManager = UndoManager()
 
     @Published var fileURL: URL?
@@ -167,6 +167,73 @@ final class EditorDocument: ObservableObject, Identifiable {
             annotation.bounds = previous.bounds
         }
         refresh(annotation.page)
+        markChanged()
+    }
+
+    // MARK: - 直接編輯原有文字
+
+    private var isEditingText = false
+
+    /// 點選頁面上的文字：以文字編輯引擎找出該行，並在原位顯示編輯框。
+    func beginTextEdit(at point: CGPoint, on page: PDFPage) {
+        guard !isEditingText else {
+            pdfView?.endInlineEditing()
+            return
+        }
+        let pageIndex = pdf.index(for: page)
+        guard pageIndex != NSNotFound else { return }
+        // 圖片、簽名、浮水印等自訂註解無法經由 PDF 資料保留，先固定到頁面中
+        bakeCustomAnnotations()
+        guard let data = pdf.dataRepresentation() else { return }
+        isEditingText = true
+        let password = security?.userPassword
+        Task { @MainActor in
+            do {
+                guard let line = try await PDFEngineBridge.shared.textLine(in: data, password: password, page: pageIndex, at: point),
+                      let currentPage = pdf.page(at: pageIndex) else {
+                    isEditingText = false
+                    NSSound.beep()
+                    return
+                }
+                pdfView?.showInlineEditor(for: line, on: currentPage) { [weak self] newText in
+                    guard let self else { return }
+                    self.isEditingText = false
+                    guard let newText, newText != line.text else { return }
+                    self.commitTextEdit(data: data, password: password, pageIndex: pageIndex, line: line, newText: newText)
+                }
+            } catch {
+                isEditingText = false
+                Panels.showError(error, title: "無法編輯文字")
+            }
+        }
+    }
+
+    private func commitTextEdit(data: Data, password: String?, pageIndex: Int, line: EditableTextLine, newText: String) {
+        Task { @MainActor in
+            do {
+                let edited = try await PDFEngineBridge.shared.replacingTextLine(in: data, password: password, page: pageIndex, line: line.index, with: newText)
+                guard let document = PDFDocument(data: edited) else { throw PDFEngineError.invalidResponse("PDF") }
+                replaceDocument(with: document, actionName: "編輯文字")
+            } catch {
+                Panels.showError(error, title: "無法修改文字")
+            }
+        }
+    }
+
+    /// 以新的 PDFDocument 取代目前內容（保留閱讀位置，可復原）。
+    func replaceDocument(with document: PDFDocument, actionName: String) {
+        let previous = pdf
+        let destination = pdfView?.currentDestination
+        let pageIndex = destination?.page.map { previous.index(for: $0) } ?? currentPageIndex
+        pdf = document
+        selectedPageIDs = []
+        selectedAnnotation = nil
+        searchResults = []
+        pdfView?.document = document
+        if let page = document.page(at: max(0, min(pageIndex, document.pageCount - 1))) {
+            pdfView?.go(to: PDFDestination(page: page, at: destination?.point ?? CGPoint(x: 0, y: page.bounds(for: .cropBox).maxY)))
+        }
+        registerUndo(actionName) { $0.replaceDocument(with: previous, actionName: actionName) }
         markChanged()
     }
 

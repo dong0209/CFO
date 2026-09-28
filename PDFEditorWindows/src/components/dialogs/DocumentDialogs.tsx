@@ -352,7 +352,7 @@ const SHORTCUTS: Array<[string, string]> = [
   ["顯示／隱藏側欄", "F4"],
   ["刪除選取的註解", "Delete"],
   ["切回選取工具", "Esc"],
-  ["工具", "V 選取、Y 螢光筆、U 底線、K 刪除線、N 便利貼、B 文字方塊、P 手繪、R 矩形、O 橢圓、L 直線、A 箭頭、I 白底遮蓋、X 塗黑遮蓋、E 橡皮擦"],
+  ["工具", "V 選取、T 編輯文字、Y 螢光筆、U 底線、K 刪除線、N 便利貼、B 文字方塊、P 手繪、R 矩形、O 橢圓、L 直線、A 箭頭、I 白底遮蓋、X 塗黑遮蓋、E 橡皮擦"],
 ];
 
 export function ShortcutsDialog({ done }: { done: Done }) {

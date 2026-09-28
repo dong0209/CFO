@@ -4,10 +4,16 @@ on:
   push:
     paths:
       - "PDFEditor/**"
+      - "PDFEditorWindows/src/engine/**"
+      - "PDFEditorWindows/package*.json"
+      - "PDFEditorWindows/vite.mac-engine.config.ts"
       - ".github/workflows/pdf-editor-macos.yml"
   pull_request:
     paths:
       - "PDFEditor/**"
+      - "PDFEditorWindows/src/engine/**"
+      - "PDFEditorWindows/package*.json"
+      - "PDFEditorWindows/vite.mac-engine.config.ts"
       - ".github/workflows/pdf-editor-macos.yml"
   workflow_dispatch:
 
@@ -26,11 +32,25 @@ jobs:
           xcodebuild -version
           swift --version
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: PDFEditorWindows/package-lock.json
+
+      - name: 建置文字編輯引擎（MuPDF）
+        working-directory: PDFEditorWindows
+        run: |
+          npm ci
+          npm run build:mac-engine
+
       - name: 編譯
         run: swift build
 
       - name: 單元測試
         run: swift test
+        env:
+          PDFEDITOR_ENGINE_DIR: ${{ github.workspace }}/PDFEditorWindows/dist-mac-engine
 
       - name: 打包 App 與 DMG
         env:

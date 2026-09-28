@@ -69,6 +69,9 @@ final class EditorPDFView: PDFView {
             editor.selectedAnnotation = nil
             super.mouseDown(with: event)
 
+        case .editText:
+            editor.beginTextEdit(at: point, on: page)
+
         case .highlight, .underline, .strikeout:
             super.mouseDown(with: event)
 
@@ -202,6 +205,8 @@ final class EditorPDFView: PDFView {
             super.mouseMoved(with: event)
         case .eraser:
             NSCursor.disappearingItem.set()
+        case .editText:
+            NSCursor.iBeam.set()
         default:
             NSCursor.crosshair.set()
         }
@@ -218,6 +223,59 @@ final class EditorPDFView: PDFView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    // MARK: - 直接編輯文字
+
+    private var inlineEditor: InlineTextField?
+    private var inlineObservers: [NSObjectProtocol] = []
+
+    /// 在文字行的位置顯示編輯框；完成時回傳新文字（取消為 nil）。
+    func showInlineEditor(for line: EditableTextLine, on page: PDFPage, completion: @escaping (String?) -> Void) {
+        endInlineEditing()
+        let field = InlineTextField(line: line, page: page) { [weak self] value in
+            self?.removeInlineObservers()
+            self?.inlineEditor = nil
+            completion(value)
+        }
+        inlineEditor = field
+        addSubview(field)
+        positionInlineEditor()
+        window?.makeFirstResponder(field)
+        field.currentEditor()?.selectAll(nil)
+
+        let center = NotificationCenter.default
+        let reposition: (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.positionInlineEditor() }
+        }
+        if let clip = documentView?.enclosingScrollView?.contentView {
+            clip.postsBoundsChangedNotifications = true
+            inlineObservers.append(center.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main, using: reposition))
+        }
+        inlineObservers.append(center.addObserver(forName: .PDFViewScaleChanged, object: self, queue: .main, using: reposition))
+    }
+
+    /// 結束編輯並套用目前輸入的內容。
+    func endInlineEditing() {
+        inlineEditor?.finish(commit: true)
+    }
+
+    private func removeInlineObservers() {
+        inlineObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        inlineObservers = []
+    }
+
+    private func positionInlineEditor() {
+        guard let field = inlineEditor else { return }
+        let rect = convert(field.line.bounds, from: field.page)
+        field.font = field.line.displayFont(scale: scaleFactor)
+        let textWidth = (field.stringValue as NSString).size(withAttributes: [.font: field.font as Any]).width
+        field.frame = CGRect(x: rect.minX - 4, y: rect.minY - 3, width: max(rect.width, textWidth) + 16, height: rect.height + 6)
+    }
+
+    override func layout() {
+        super.layout()
+        positionInlineEditor()
     }
 
     // MARK: - 建立註解
@@ -342,5 +400,68 @@ struct PDFKitView: NSViewRepresentable {
                 document.currentPageIndex = index
             }
         }
+    }
+}
+
+/// 直接編輯文字時覆蓋在原文上的輸入框（僅為畫面上的編輯介面，套用後會真正改寫頁面內容）。
+final class InlineTextField: NSTextField, NSTextFieldDelegate {
+    let line: EditableTextLine
+    let page: PDFPage
+    private var completion: ((String?) -> Void)?
+
+    init(line: EditableTextLine, page: PDFPage, completion: @escaping (String?) -> Void) {
+        self.line = line
+        self.page = page
+        self.completion = completion
+        super.init(frame: .zero)
+        stringValue = line.text
+        textColor = line.nsColor
+        backgroundColor = .white
+        drawsBackground = true
+        isBordered = true
+        isBezeled = true
+        bezelStyle = .squareBezel
+        focusRingType = .exterior
+        lineBreakMode = .byClipping
+        cell?.usesSingleLineMode = true
+        cell?.isScrollable = true
+        delegate = self
+        toolTip = "\(line.fontName) \(Int(line.fontSize.rounded())) pt"
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    func finish(commit: Bool) {
+        guard let completion else { return }
+        self.completion = nil
+        completion(commit ? stringValue : nil)
+        DispatchQueue.main.async { [weak self] in
+            self?.removeFromSuperview()
+        }
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        if selector == #selector(NSResponder.insertNewline(_:)) {
+            finish(commit: true)
+            return true
+        }
+        if selector == #selector(NSResponder.cancelOperation(_:)) {
+            finish(commit: false)
+            return true
+        }
+        return false
+    }
+
+    func controlTextDidChange(_ notification: Notification) {
+        let width = (stringValue as NSString).size(withAttributes: [.font: font as Any]).width + 16
+        if width > frame.width {
+            frame.size.width = width
+        }
+    }
+
+    func controlTextDidEndEditing(_ notification: Notification) {
+        finish(commit: true)
     }
 }

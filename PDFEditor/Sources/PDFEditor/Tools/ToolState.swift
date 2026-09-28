@@ -3,7 +3,7 @@ import PDFEditorCore
 import SwiftUI
 
 enum Tool: String, CaseIterable, Identifiable {
-    case select, highlight, underline, strikeout
+    case select, editText, highlight, underline, strikeout
     case note, textBox, ink
     case rectangle, ellipse, line, arrow
     case whiteout, redact, image, signature, eraser
@@ -13,6 +13,7 @@ enum Tool: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .select: return "選取"
+        case .editText: return "編輯文字"
         case .highlight: return "螢光筆"
         case .underline: return "底線"
         case .strikeout: return "刪除線"
@@ -34,6 +35,7 @@ enum Tool: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .select: return "cursorarrow"
+        case .editText: return "character.cursor.ibeam"
         case .highlight: return "highlighter"
         case .underline: return "underline"
         case .strikeout: return "strikethrough"
@@ -56,6 +58,7 @@ enum Tool: String, CaseIterable, Identifiable {
     var shortcut: KeyEquivalent? {
         switch self {
         case .select: return "v"
+        case .editText: return "g"
         case .highlight: return "y"
         case .underline: return "u"
         case .strikeout: return "k"
@@ -81,7 +84,7 @@ enum Tool: String, CaseIterable, Identifiable {
     }
 
     var usesColor: Bool {
-        ![.select, .whiteout, .redact, .image, .signature, .eraser].contains(self)
+        ![.select, .editText, .whiteout, .redact, .image, .signature, .eraser].contains(self)
     }
 
     var usesLineWidth: Bool { [.ink, .rectangle, .ellipse, .line, .arrow].contains(self) }
@@ -98,7 +101,7 @@ enum Tool: String, CaseIterable, Identifiable {
     }
 
     static let groups: [[Tool]] = [
-        [.select],
+        [.select, .editText],
         [.highlight, .underline, .strikeout],
         [.note, .textBox, .ink],
         [.rectangle, .ellipse, .line, .arrow],

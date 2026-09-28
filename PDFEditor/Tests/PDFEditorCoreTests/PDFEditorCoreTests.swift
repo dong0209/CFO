@@ -238,3 +238,56 @@ final class FontTests: XCTestCase {
         XCTAssertEqual(saved.font?.pointSize ?? 0, 36, accuracy: 0.5)
     }
 }
+
+/// 需要先建置引擎（PDFEditorWindows：npm run build:mac-engine），CI 會自動設定 PDFEDITOR_ENGINE_DIR。
+final class TextEditEngineTests: XCTestCase {
+    @MainActor
+    func testReplaceTextLineThroughEngine() async throws {
+        guard PDFEngineBridge.engineDirectory != nil else {
+            throw XCTSkip("尚未建置文字編輯引擎")
+        }
+        _ = NSApplication.shared
+        let original = try XCTUnwrap(makeDocument(pages: 2).dataRepresentation())
+        let bridge = PDFEngineBridge.shared
+
+        // 「Page 2」位於第 2 頁 (72, 700)，字級 24
+        let line = try await bridge.textLine(in: original, password: nil, page: 1, at: CGPoint(x: 90, y: 708))
+        let found = try XCTUnwrap(line)
+        XCTAssertEqual(found.text, "Page 2")
+        XCTAssertEqual(found.fontSize, 24, accuracy: 0.5)
+        XCTAssertEqual(found.bounds.minX, 72, accuracy: 1)
+        XCTAssertTrue(found.bounds.contains(CGPoint(x: 90, y: 708)))
+
+        let missing = try await bridge.textLine(in: original, password: nil, page: 1, at: CGPoint(x: 400, y: 100))
+        XCTAssertNil(missing)
+
+        let edited = try await bridge.replacingTextLine(in: original, password: nil, page: 1, line: found.index, with: "第二章 Chapter")
+        let document = try XCTUnwrap(PDFDocument(data: edited))
+        XCTAssertEqual(document.pageCount, 2)
+        let text = document.page(at: 1)?.string ?? ""
+        XCTAssertTrue(text.contains("Chapter"), "新文字應寫入頁面：\(text)")
+        XCTAssertFalse(text.contains("Page 2"), "原文字應被移除：\(text)")
+        XCTAssertTrue((document.page(at: 0)?.string ?? "").contains("Page 1"), "其他頁面不受影響")
+    }
+
+    @MainActor
+    func testEncryptedDocumentNeedsPassword() async throws {
+        guard PDFEngineBridge.engineDirectory != nil else {
+            throw XCTSkip("尚未建置文字編輯引擎")
+        }
+        _ = NSApplication.shared
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("locked.pdf")
+        try ExportService.write(makeDocument(pages: 1), to: url, security: SecurityOptions(userPassword: "pw"))
+        let data = try Data(contentsOf: url)
+
+        do {
+            _ = try await PDFEngineBridge.shared.textLine(in: data, password: "wrong", page: 0, at: CGPoint(x: 90, y: 708))
+            XCTFail("錯誤密碼應失敗")
+        } catch PDFEngineError.passwordRequired {}
+        let line = try await PDFEngineBridge.shared.textLine(in: data, password: "pw", page: 0, at: CGPoint(x: 90, y: 708))
+        XCTAssertEqual(line?.text, "Page 1")
+    }
+}

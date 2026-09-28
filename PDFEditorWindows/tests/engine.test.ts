@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { PdfEngine } from "../src/engine/pdfEngine";
-import { makePdf, makePng } from "./helpers";
+import { latinFontFor, PdfEngine } from "../src/engine/pdfEngine";
+import { makePdf, makePng, makeStyledPdf } from "./helpers";
 
 const texts = (engine: PdfEngine, id: number) =>
   Array.from({ length: engine.info(id).pageCount }, (_, i) => engine.pageText(id, i).trim());
@@ -250,5 +250,68 @@ describe("搜尋、書籤、表單與存檔", () => {
     const { id } = engine.open(makePdf(3));
     const reopened = engine.open(engine.save(id, { compress: true })).id;
     expect(engine.info(reopened).pageCount).toBe(3);
+  });
+});
+
+describe("直接編輯文字", () => {
+  const pixel = (engine: PdfEngine, id: number, x: number, y: number) => {
+    const { pixels, width } = engine.render(id, 0, 1);
+    const o = (Math.round(y) * width + Math.round(x)) * 4;
+    return [pixels[o], pixels[o + 1], pixels[o + 2]];
+  };
+
+  it("讀取文字行的字型、字級、顏色與位置", () => {
+    const { id } = engine.open(makeStyledPdf());
+    const lines = engine.textLines(id, 0);
+    expect(lines.map((l) => l.text)).toEqual(["Old Title Here", "Second line stays"]);
+    const [title] = lines;
+    expect(title.fontName).toBe("Times-Bold");
+    expect(title).toMatchObject({ size: 24, bold: true, serif: true, mono: false, italic: false });
+    expect(title.color[2]).toBeCloseTo(0.6);
+    expect(title.origin).toEqual([72, 112]);
+    expect(title.userOrigin[1]).toBeCloseTo(730);
+    expect(engine.textLineAtUserPoint(id, 0, [100, 735])?.index).toBe(0);
+    expect(engine.textLineAt(id, 0, [100, 139])?.index).toBe(1);
+    expect(engine.textLineAt(id, 0, [500, 500])).toBeNull();
+  });
+
+  it("替換文字：原字形真正移除，背景與其他行保留，可復原", () => {
+    const { id } = engine.open(makeStyledPdf());
+    const background = pixel(engine, id, 300, 842 - 735);
+    engine.replaceTextLine(id, 0, 0, "New Heading");
+
+    const text = engine.pageText(id, 0);
+    expect(text).toContain("New Heading");
+    expect(text).not.toContain("Old Title");
+    expect(text).toContain("Second line stays");
+    expect(pixel(engine, id, 300, 842 - 735)).toEqual(background);
+    expect(engine.annotations(id, 0)).toHaveLength(0);
+
+    const [edited] = engine.textLines(id, 0);
+    expect(edited).toMatchObject({ text: "New Heading", size: 24, fontName: "Times-Bold" });
+    expect(edited.origin[0]).toBeCloseTo(72);
+    expect(edited.origin[1]).toBeCloseTo(112);
+    expect(edited.color[2]).toBeCloseTo(0.6);
+
+    engine.undo(id);
+    expect(engine.pageText(id, 0)).toContain("Old Title Here");
+  });
+
+  it("可重複編輯同一行、改成中文、刪除整行，並在存檔後保留", () => {
+    const { id } = engine.open(makeStyledPdf());
+    engine.replaceTextLine(id, 0, 0, "First edit");
+    engine.replaceTextLine(id, 0, 0, "第二次修改 Second");
+    expect(engine.textLines(id, 0).map((l) => l.text)).toEqual(["第二次修改 Second", "Second line stays"]);
+
+    engine.replaceTextLine(id, 0, 1, "");
+    const reopened = engine.open(engine.save(id)).id;
+    expect(engine.textLines(reopened, 0).map((l) => l.text)).toEqual(["第二次修改 Second"]);
+    expect(engine.removeStamps(reopened)).toBe(0);
+  });
+
+  it("依原字型挑選相近的標準字型", () => {
+    expect(latinFontFor({ bold: false, italic: false, serif: false, mono: false })).toBe("Helvetica");
+    expect(latinFontFor({ bold: true, italic: true, serif: true, mono: false })).toBe("Times-BoldItalic");
+    expect(latinFontFor({ bold: false, italic: true, serif: false, mono: true })).toBe("Courier-Oblique");
   });
 });
