@@ -46,14 +46,14 @@ public final class ImageStampAnnotation: CustomDrawnAnnotation {
 public final class WatermarkAnnotation: CustomDrawnAnnotation {
     public let text: String
     public let fontSize: CGFloat
-    public let color: NSColor
+    public let textColor: NSColor
     public let opacity: CGFloat
     public let angle: CGFloat
 
     public init(pageBounds: CGRect, text: String, fontSize: CGFloat, color: NSColor, opacity: CGFloat, angle: CGFloat) {
         self.text = text
         self.fontSize = fontSize
-        self.color = color
+        self.textColor = color
         self.opacity = opacity
         self.angle = angle
         super.init(bounds: pageBounds, forType: .stamp, withProperties: nil)
@@ -69,7 +69,7 @@ public final class WatermarkAnnotation: CustomDrawnAnnotation {
     public override func draw(with box: PDFDisplayBox, in context: CGContext) {
         let attributed = NSAttributedString(string: text, attributes: [
             .font: TextDrawing.font(size: fontSize, bold: true),
-            .foregroundColor: color,
+            .foregroundColor: textColor,
         ])
         let size = attributed.size()
         context.saveGState()
@@ -119,14 +119,14 @@ public enum StampPosition: String, CaseIterable, Identifiable, Sendable {
 public final class TextStampAnnotation: CustomDrawnAnnotation {
     public let text: String
     public let fontSize: CGFloat
-    public let color: NSColor
+    public let textColor: NSColor
     public let position: StampPosition
     public let margin: CGFloat
 
     public init(pageBounds: CGRect, text: String, fontSize: CGFloat, color: NSColor, position: StampPosition, margin: CGFloat) {
         self.text = text
         self.fontSize = fontSize
-        self.color = color
+        self.textColor = color
         self.position = position
         self.margin = margin
         super.init(bounds: pageBounds, forType: .stamp, withProperties: nil)
@@ -142,7 +142,7 @@ public final class TextStampAnnotation: CustomDrawnAnnotation {
     public override func draw(with box: PDFDisplayBox, in context: CGContext) {
         let attributed = NSAttributedString(string: text, attributes: [
             .font: TextDrawing.font(size: fontSize, bold: false),
-            .foregroundColor: color,
+            .foregroundColor: textColor,
         ])
         let origin = position.origin(for: attributed.size(), in: bounds, margin: margin)
         TextDrawing.draw(attributed, at: origin, in: context)
