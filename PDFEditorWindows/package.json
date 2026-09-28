@@ -10,7 +10,7 @@
     "test": "vitest run",
     "typecheck": "tsc -p .",
     "e2e": "node e2e/app.e2e.mjs",
-    "dist:win": "npm run build && electron-builder --win --publish never"
+    "dist:win": "npm run build && electron-builder --win nsis portable --x64 --publish never"
   },
   "author": "PDF 編輯器",
   "license": "AGPL-3.0-or-later",
@@ -62,19 +62,8 @@
     ],
     "win": {
       "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
+        "nsis",
+        "portable"
       ],
       "icon": "build/icon.png"
     },

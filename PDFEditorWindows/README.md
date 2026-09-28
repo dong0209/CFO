@@ -25,10 +25,10 @@
 每次推送到 GitHub 後，GitHub Actions 會在 Windows 上自動建置、執行單元測試與端對端測試，並產生安裝檔：
 
 1. 到 repo 的 **Actions** 頁面，點選最新一次的「PDF 編輯器（Windows）」執行紀錄。
-2. 在頁面下方的 **Artifacts** 下載 `PDFEditor-Windows` 並解壓縮，裡面有：
-   - `PDFEditor-Setup-版本-x64.exe`：一般電腦的安裝程式
-   - `PDFEditor-Setup-版本-arm64.exe`：ARM 版 Windows（例如 Surface Pro X、Copilot+ PC）的安裝程式
-   - `PDFEditor-Portable-版本.exe`：免安裝版，直接執行即可
+2. 在頁面下方的 **Artifacts** 下載需要的版本並解壓縮：
+   - `PDFEditor-Windows-x64-安裝檔`：一般電腦（Intel／AMD）的安裝程式
+   - `PDFEditor-Windows-ARM64-安裝檔`：ARM 版 Windows（例如 Surface Pro X、Copilot+ PC）的安裝程式
+   - `PDFEditor-Windows-免安裝版`：不需安裝，直接執行即可（x64）
 3. 執行安裝程式。安裝檔沒有數位簽章，Windows SmartScreen 可能會顯示「Windows 已保護您的電腦」，請按 **其他資訊 ▸ 仍要執行**。
 
 ### 方式二：自行建置

@@ -89,6 +89,17 @@ export function Viewer({ tab }: { tab: DocTab }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab.scrollRequest?.nonce]);
 
+  // 切換回此分頁時恢復到原本的頁面
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const row = rows.find((r) => r.pages.includes(tab.currentPage));
+    if (el && row && tab.currentPage > 0) {
+      el.scrollTop = row.top - 8;
+      setScrollTop(el.scrollTop);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // 更新目前頁面
   const lastReported = useRef(tab.currentPage);
   useEffect(() => {
