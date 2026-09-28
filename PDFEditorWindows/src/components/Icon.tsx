@@ -1,0 +1,60 @@
+// 線條圖示（24×24，stroke 繪製），跟隨文字顏色，淺色／深色主題皆適用。
+const PATHS: Record<string, string> = {
+  pages: "M4 4h7v9H4zM13 4h7v9h-7zM4 15h7v5H4zM13 15h7v5h-7z",
+  bookmark: "M6 3h12v18l-6-4-6 4z",
+  comment: "M4 5h16v11H9l-5 4z",
+  search: "M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM15.5 15.5 20 20",
+  plus: "M12 5v14M5 12h14",
+  minus: "M5 12h14",
+  trash: "M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6",
+  "rotate-right": "M20 4v5h-5M20 9a8 8 0 1 0 1.5 6",
+  "rotate-left": "M4 4v5h5M4 9a8 8 0 1 1-1.5 6",
+  "chevron-up": "M6 15l6-6 6 6",
+  "chevron-down": "M6 9l6 6 6-6",
+  open: "M3 7h6l2 2h10v10H3zM3 7V5h6l2 2",
+  save: "M5 3h11l3 3v15H5zM8 3v6h8V3M8 21v-7h8v7",
+  undo: "M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3",
+  redo: "M15 14l5-5-5-5M20 9H10a6 6 0 0 0 0 12h3",
+  "zoom-in": "M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM15.5 15.5 20 20M8 10.5h5M10.5 8v5",
+  "zoom-out": "M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM15.5 15.5 20 20M8 10.5h5",
+  "fit-width": "M3 5v14M21 5v14M7 12h10M7 12l3-3M7 12l3 3M17 12l-3-3M17 12l-3 3",
+  layout: "M3 5h8v14H3zM13 5h8v14h-8z",
+  sidebar: "M3 4h18v16H3zM9 4v16",
+  print: "M7 9V3h10v6M7 17H4V9h16v8h-3M7 14h10v7H7z",
+  close: "M6 6l12 12M18 6 6 18",
+  cursor: "M5 3l14 8-6 2-3 6z",
+  highlighter: "M14 4l6 6-8 8H6v-6zM4 20h8",
+  underline: "M7 4v7a5 5 0 0 0 10 0V4M5 20h14",
+  strikethrough: "M4 12h16M16 6c-1-1.5-2.5-2-4-2-2.5 0-4 1.5-4 3.5M8 18c1 1.5 2.5 2 4 2 2.5 0 4-1.5 4-3.5",
+  note: "M4 4h16v12l-4 4H4zM16 20v-4h4M8 9h8M8 13h5",
+  textbox: "M4 5h16v14H4zM8 9h8M12 9v7",
+  pen: "M4 20l4-1 11-11-3-3L5 16zM14 6l3 3",
+  square: "M5 5h14v14H5z",
+  circle: "M12 4a8 8 0 1 1 0 16 8 8 0 0 1 0-16z",
+  line: "M5 19 19 5",
+  arrow: "M5 19 19 5M10 5h9v9",
+  whiteout: "M4 7h16v10H4zM8 11h8",
+  redact: "M4 7h16v10H4z M6 9h12v6H6z",
+  image: "M4 5h16v14H4zM4 16l5-5 4 4 3-3 4 4M15.5 8.5a1 1 0 1 1 0 .1",
+  signature: "M3 17c3-6 5-9 6-8s-2 7 0 7 3-5 4-4 0 4 2 4 3-2 6-2M3 21h18",
+  eraser: "M8 20h12M5 15l9-9 5 5-9 9H8z",
+  "file-plus": "M6 3h8l4 4v14H6zM14 3v4h4M12 11v6M9 14h6",
+  images: "M3 7h14v12H3zM7 3h14v12M3 16l4-4 3 3 2-2 5 5",
+  merge: "M6 3v6a6 6 0 0 0 6 6h0a6 6 0 0 1 6 6M18 3v6a6 6 0 0 1-6 6M12 15v6",
+  lock: "M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4",
+  watermark: "M12 3c3 4 6 7 6 11a6 6 0 0 1-12 0c0-4 3-7 6-11z",
+  hash: "M9 4 7 20M17 4l-2 16M4 9h16M3 15h16",
+  ocr: "M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4M8 9h8M8 12h8M8 15h5",
+  flatten: "M4 8l8-4 8 4-8 4zM4 12l8 4 8-4M4 16l8 4 8-4",
+  split: "M6 3h12v7H6zM6 14h12v7H6zM3 12h3M18 12h3",
+  export: "M12 3v12M8 7l4-4 4 4M5 13v7h14v-7",
+  help: "M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18zM9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.7M12 17h.01",
+};
+
+export function Icon({ name, size = 18 }: { name: string; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="icon">
+      <path d={PATHS[name] ?? PATHS.help} />
+    </svg>
+  );
+}

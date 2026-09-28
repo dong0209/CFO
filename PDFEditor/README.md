@@ -4,6 +4,7 @@
 
 - 系統需求：macOS 13 Ventura 以上（Apple Silicon 與 Intel 皆可）
 - 不需要安裝任何第三方套件
+- Windows 版請見 [PDFEditorWindows](../PDFEditorWindows/README.md)
 
 ## 功能
 

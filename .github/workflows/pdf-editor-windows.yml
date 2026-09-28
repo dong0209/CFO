@@ -1,0 +1,63 @@
+name: PDF 編輯器（Windows）
+
+on:
+  push:
+    paths:
+      - "PDFEditorWindows/**"
+      - ".github/workflows/pdf-editor-windows.yml"
+  pull_request:
+    paths:
+      - "PDFEditorWindows/**"
+      - ".github/workflows/pdf-editor-windows.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: PDFEditorWindows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: PDFEditorWindows/package-lock.json
+
+      - name: 安裝套件
+        run: npm ci
+
+      - name: 型別檢查
+        run: npm run typecheck
+
+      - name: 單元測試
+        run: npm test
+
+      - name: 建置
+        run: npm run build
+
+      - name: 端對端測試（實際啟動 App）
+        run: npm run e2e
+
+      - name: 打包安裝檔
+        run: npx electron-builder --win --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: 上傳安裝檔
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDFEditor-Windows
+          path: |
+            PDFEditorWindows/release/*.exe
+          if-no-files-found: error
+
+      - name: 上傳測試截圖
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: PDFEditorWindows/e2e/screenshots
+          if-no-files-found: ignore

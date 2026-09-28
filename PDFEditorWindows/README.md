@@ -1,0 +1,112 @@
+# PDF 編輯器（Windows 版）
+
+以 Electron、React 與 MuPDF（WebAssembly）開發的 Windows PDF 編輯程式，功能與 [macOS 版](../PDFEditor/README.md) 對應，介面為繁體中文，所有處理（包含 OCR 文字辨識）都在本機完成，不會上傳任何檔案。
+
+- 系統需求：Windows 10 / 11（x64 或 ARM64）
+- 安裝檔內含所有元件與 OCR 語言資料，可離線使用
+
+## 功能
+
+| 分類 | 功能 |
+|---|---|
+| 檢視 | 多分頁開啟多份文件、縮圖側欄、書籤（大綱）、放大縮小（含 Ctrl+滾輪）、符合寬度／頁面、連續捲動／雙頁、全文搜尋與結果標示、前往指定頁、點選連結跳頁、淺色／深色模式 |
+| 註解 | 螢光筆、底線、刪除線、便利貼、文字方塊（支援中文）、手繪、矩形、橢圓、直線、箭頭；可自訂顏色、線寬、字級、填色；拖曳移動、雙擊編輯文字、Delete 刪除、橡皮擦；註解清單面板 |
+| 編輯 | 插入圖片、手寫簽名（可儲存多組常用簽名或匯入簽名圖檔）、白底遮蓋、塗黑遮蓋（永久移除底下的文字、圖片與線條）、中文浮水印、頁碼與頁首頁尾 |
+| 頁面 | 拖曳縮圖重新排序、多選（Ctrl／Shift）、旋轉、刪除、複製、插入空白頁、從其他 PDF 插入頁面、擷取頁面為新檔、合併多份 PDF、依頁數或頁碼範圍分割 |
+| 表單 | 直接在頁面上填寫文字欄位、核取方塊、選項按鈕、下拉選單；平面化所有註解與表單 |
+| 轉換 | 匯出為 PNG／JPEG（72–600 dpi）、匯出純文字、從圖片建立 PDF、OCR 文字辨識（繁中、簡中、英文、日文），讓掃描檔可搜尋、可選取 |
+| 安全 | AES-256 加密（開啟密碼與擁有者密碼）、開啟受密碼保護的檔案、移除密碼、匯出壓縮版本 |
+| 其他 | 完整復原／重做、列印、最近開啟的檔案、拖放開啟 PDF 或圖片、未儲存變更提醒、PDF 檔案關聯（在檔案總管按右鍵 ▸ 開啟檔案） |
+
+## 安裝
+
+### 方式一：下載安裝檔
+
+每次推送到 GitHub 後，GitHub Actions 會在 Windows 上自動建置、執行單元測試與端對端測試，並產生安裝檔：
+
+1. 到 repo 的 **Actions** 頁面，點選最新一次的「PDF 編輯器（Windows）」執行紀錄。
+2. 在頁面下方的 **Artifacts** 下載 `PDFEditor-Windows` 並解壓縮，裡面有：
+   - `PDFEditor-Setup-版本-x64.exe`：一般電腦的安裝程式
+   - `PDFEditor-Setup-版本-arm64.exe`：ARM 版 Windows（例如 Surface Pro X、Copilot+ PC）的安裝程式
+   - `PDFEditor-Portable-版本.exe`：免安裝版，直接執行即可
+3. 執行安裝程式。安裝檔沒有數位簽章，Windows SmartScreen 可能會顯示「Windows 已保護您的電腦」，請按 **其他資訊 ▸ 仍要執行**。
+
+### 方式二：自行建置
+
+需要 Node.js 22 以上：
+
+```bash
+cd PDFEditorWindows
+npm ci
+npm start              # 建置並啟動
+npm test               # 單元測試（PDF 引擎）
+npm run e2e            # 端對端測試（需先 npm run build；Linux 請用 xvfb-run）
+npm run dist:win       # 產生 Windows 安裝檔（release/ 資料夾）
+```
+
+## 使用說明
+
+### 常用快捷鍵
+
+| 動作 | 快捷鍵 |
+|---|---|
+| 開啟／新增空白文件 | Ctrl+O／Ctrl+N |
+| 儲存／另存新檔 | Ctrl+S／Ctrl+Shift+S |
+| 列印／關閉分頁 | Ctrl+P／Ctrl+W |
+| 復原／重做 | Ctrl+Z／Ctrl+Y |
+| 尋找／下一個／上一個 | Ctrl+F／F3／Shift+F3 |
+| 放大／縮小／實際大小 | Ctrl+=／Ctrl+-／Ctrl+0（或 Ctrl+滾輪） |
+| 符合頁面／符合寬度 | Ctrl+1／Ctrl+2 |
+| 向右／向左旋轉頁面 | Ctrl+R／Ctrl+Shift+R |
+| 插入空白頁／刪除頁面 | Ctrl+Shift+N／Ctrl+Delete |
+| 新增書籤／前往頁面 | Ctrl+D／Ctrl+G |
+| 上一頁／下一頁／第一頁／最後一頁 | Page Up／Page Down／Home／End |
+| 顯示／隱藏側欄 | F4 |
+| 刪除選取的註解 | Delete |
+| 切回選取工具 | Esc |
+
+### 工具快捷鍵（單鍵）
+
+選取 V、螢光筆 Y、底線 U、刪除線 K、便利貼 N、文字方塊 B、手繪 P、矩形 R、橢圓 O、直線 L、箭頭 A、白底遮蓋 I、塗黑遮蓋 X、橡皮擦 E。
+
+### 小技巧
+
+- **修改原有文字**：先用「白底遮蓋」蓋掉原文字，再用「文字方塊」寫上新內容。
+- **遮蓋機密資料**：用「塗黑遮蓋」框選區域後按「套用遮蓋」。區域內的文字、圖片像素與線條會被永久移除，存檔後無法再取回。
+- **簽名**：第一次使用時在簽名板上書寫並按「儲存並使用」，之後即可直接選用；在簽名上按右鍵可刪除。
+- **浮水印與頁碼**：會寫入頁面內容，其他 PDF 閱讀器也看得到；隨時可用「工具 ▸ 移除浮水印與頁碼」移除（即使已存檔後重新開啟）。
+- **OCR**：「工具 ▸ 文字辨識」使用內建的 Tesseract 引擎在本機辨識，辨識後頁面外觀不變，但可以搜尋、選取、複製文字。
+- **複製文字**：用選取工具在頁面上拖曳選取文字後按 Ctrl+C。
+- **密碼**：「檔案 ▸ 密碼保護」設定的密碼會在下次儲存時生效；開啟受保護的檔案後，存檔會沿用原本的開啟密碼。
+
+## 專案結構
+
+```
+PDFEditorWindows/
+├── electron/
+│   ├── main.cjs            主程序：視窗、檔案存取、列印、簽名與最近開啟檔案
+│   ├── menu.cjs            繁體中文選單
+│   └── preload.cjs         提供畫面安全的系統功能
+├── src/
+│   ├── engine/             PDF 引擎（MuPDF，於 Web Worker 執行，可在 Node 中測試）
+│   │   ├── pdfEngine.ts    開啟、渲染、註解、頁面、浮水印、遮蓋、書籤、加密、匯出
+│   │   ├── geometry.ts     座標與文字矩陣計算
+│   │   ├── pageRanges.ts   頁碼範圍解析、頁面搬移、頁碼樣板
+│   │   └── worker.ts       Web Worker 入口
+│   ├── lib/                Worker 通訊、系統 API、OCR
+│   ├── state/              介面狀態與所有操作
+│   └── components/         畫面元件（檢視器、側欄、工具列、對話框）
+├── tests/                  PDF 引擎單元測試（Vitest）
+├── e2e/app.e2e.mjs         端對端測試（Playwright 實際操作 App）
+└── scripts/                複製 OCR 資源、產生圖示
+```
+
+## 已知限制
+
+- 無法直接修改 PDF 內原有的文字字串（請參考上方「修改原有文字」）。
+- 浮水印、頁碼與 OCR 文字層使用閱讀器內建的中文字型（未內嵌），不同閱讀器的字形可能略有差異。
+- 安裝檔未經數位簽章，首次執行需在 SmartScreen 允許。
+
+## 授權
+
+本程式使用 [MuPDF](https://mupdf.com/)（AGPL-3.0）處理 PDF，因此整個 Windows 版以 AGPL-3.0-or-later 授權；OCR 使用 [Tesseract.js](https://github.com/naptha/tesseract.js)（Apache-2.0）。
