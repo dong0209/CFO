@@ -228,21 +228,43 @@ final class EditorPDFView: PDFView {
     // MARK: - 直接編輯文字
 
     private var inlineEditor: InlineTextField?
+    private var inlineStatus: NSTextField?
     private var inlineObservers: [NSObjectProtocol] = []
 
-    /// 在文字行的位置顯示編輯框；完成時回傳新文字（取消為 nil）。
-    func showInlineEditor(for line: EditableTextLine, on page: PDFPage, completion: @escaping (String?) -> Void) {
+    /// 在文字行的位置顯示編輯框；同時辨識並尋找原字型，找到後以該字型預覽。完成時回傳新文字（取消為 nil）。
+    func showInlineEditor(for line: EditableTextLine, request: FontRequest, font: Task<ResolvedFont?, Never>, on page: PDFPage, completion: @escaping (String?) -> Void) {
         endInlineEditing()
         let field = InlineTextField(line: line, page: page) { [weak self] value in
             self?.removeInlineObservers()
             self?.inlineEditor = nil
+            self?.inlineStatus?.removeFromSuperview()
+            self?.inlineStatus = nil
             completion(value)
         }
         inlineEditor = field
         addSubview(field)
+
+        let status = NSTextField(wrappingLabelWithString: "")
+        status.font = .systemFont(ofSize: 11)
+        status.drawsBackground = true
+        status.backgroundColor = .windowBackgroundColor
+        status.isBordered = true
+        status.maximumNumberOfLines = 3
+        inlineStatus = status
+        addSubview(status)
+        updateInlineStatus(line: line, request: request, font: nil, resolving: true)
+
         positionInlineEditor()
         window?.makeFirstResponder(field)
         field.currentEditor()?.selectAll(nil)
+
+        Task { @MainActor [weak self, weak field] in
+            let resolved = await font.value
+            guard let self, let field, self.inlineEditor === field else { return }
+            field.previewFont = resolved
+            self.updateInlineStatus(line: line, request: request, font: resolved, resolving: false)
+            self.positionInlineEditor()
+        }
 
         let center = NotificationCenter.default
         let reposition: (Notification) -> Void = { [weak self] _ in
@@ -253,6 +275,26 @@ final class EditorPDFView: PDFView {
             inlineObservers.append(center.addObserver(forName: NSView.boundsDidChangeNotification, object: clip, queue: .main, using: reposition))
         }
         inlineObservers.append(center.addObserver(forName: .PDFViewScaleChanged, object: self, queue: .main, using: reposition))
+    }
+
+    private func updateInlineStatus(line: EditableTextLine, request: FontRequest, font: ResolvedFont?, resolving: Bool) {
+        var lines: [String] = []
+        if !line.isTextReliable {
+            lines.append("⚠ 原文無法正確辨識（PDF 缺少字元對照表），請重新輸入整行文字")
+        }
+        if line.hasEmbeddedFont {
+            lines.append("原檔內嵌字型「\(request.originalName)」，字形足夠時會直接沿用")
+        }
+        if resolving {
+            lines.append("正在辨識字型「\(request.originalName)」…")
+        } else if let font {
+            let source = font.source == .system ? "Mac 上的字型" : "已自動下載"
+            lines.append(font.exact ? "字型：\(font.name)（\(source)）" : "找不到「\(request.originalName)」，改用相近字型：\(font.name)（\(source)）")
+        } else {
+            lines.append("找不到字型「\(request.originalName)」，將使用標準字型")
+        }
+        inlineStatus?.stringValue = lines.joined(separator: "\n")
+        inlineStatus?.textColor = line.isTextReliable ? .labelColor : .systemRed
     }
 
     /// 結束編輯並套用目前輸入的內容。
@@ -268,9 +310,17 @@ final class EditorPDFView: PDFView {
     private func positionInlineEditor() {
         guard let field = inlineEditor else { return }
         let rect = convert(field.line.bounds, from: field.page)
-        field.font = field.line.displayFont(scale: scaleFactor)
+        let size = max(field.line.fontSize * scaleFactor, 4)
+        field.font = field.previewFont?.nsFont(size: size) ?? field.line.displayFont(scale: scaleFactor)
         let textWidth = (field.stringValue as NSString).size(withAttributes: [.font: field.font as Any]).width
         field.frame = CGRect(x: rect.minX - 4, y: rect.minY - 3, width: max(rect.width, textWidth) + 16, height: rect.height + 6)
+        if let status = inlineStatus {
+            let fitting = status.sizeThatFits(CGSize(width: 460, height: 200))
+            let width = min(max(fitting.width, 120), 460)
+            // 狀態列放在編輯框下方（依座標系統是否翻轉決定方向）
+            let y = isFlipped ? field.frame.maxY + 6 : field.frame.minY - fitting.height - 6
+            status.frame = CGRect(x: field.frame.minX, y: y, width: width, height: fitting.height)
+        }
     }
 
     override func layout() {
@@ -407,6 +457,8 @@ struct PDFKitView: NSViewRepresentable {
 final class InlineTextField: NSTextField, NSTextFieldDelegate {
     let line: EditableTextLine
     let page: PDFPage
+    /// 找到的原字型，用來預覽
+    var previewFont: ResolvedFont?
     private var completion: ((String?) -> Void)?
 
     init(line: EditableTextLine, page: PDFPage, completion: @escaping (String?) -> Void) {

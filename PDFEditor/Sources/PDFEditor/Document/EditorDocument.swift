@@ -189,17 +189,19 @@ final class EditorDocument: ObservableObject, Identifiable {
         let password = security?.userPassword
         Task { @MainActor in
             do {
-                guard let line = try await PDFEngineBridge.shared.textLine(in: data, password: password, page: pageIndex, at: point),
+                guard let (line, request) = try await PDFEngineBridge.shared.textLineWithFont(in: data, password: password, page: pageIndex, at: point),
                       let currentPage = pdf.page(at: pageIndex) else {
                     isEditingText = false
                     NSSound.beep()
                     return
                 }
-                pdfView?.showInlineEditor(for: line, on: currentPage) { [weak self] newText in
+                // 背景尋找或下載原字型，編輯框先顯示，找到後以該字型預覽
+                let fontTask = Task { await FontResolver.shared.resolve(request) }
+                pdfView?.showInlineEditor(for: line, request: request, font: fontTask, on: currentPage) { [weak self] newText in
                     guard let self else { return }
                     self.isEditingText = false
                     guard let newText, newText != line.text else { return }
-                    self.commitTextEdit(data: data, password: password, pageIndex: pageIndex, line: line, newText: newText)
+                    self.commitTextEdit(data: data, password: password, pageIndex: pageIndex, line: line, newText: newText, font: fontTask)
                 }
             } catch {
                 isEditingText = false
@@ -208,11 +210,12 @@ final class EditorDocument: ObservableObject, Identifiable {
         }
     }
 
-    private func commitTextEdit(data: Data, password: String?, pageIndex: Int, line: EditableTextLine, newText: String) {
+    private func commitTextEdit(data: Data, password: String?, pageIndex: Int, line: EditableTextLine, newText: String, font: Task<ResolvedFont?, Never>) {
         Task { @MainActor in
             do {
-                let edited = try await PDFEngineBridge.shared.replacingTextLine(in: data, password: password, page: pageIndex, line: line.index, with: newText)
-                guard let document = PDFDocument(data: edited) else { throw PDFEngineError.invalidResponse("PDF") }
+                let resolved = await font.value
+                let edited = try await PDFEngineBridge.shared.replacingTextLine(in: data, password: password, page: pageIndex, line: line.index, with: newText, font: resolved)
+                guard let document = PDFDocument(data: edited.data) else { throw PDFEngineError.invalidResponse("PDF") }
                 replaceDocument(with: document, actionName: "編輯文字")
             } catch {
                 Panels.showError(error, title: "無法修改文字")

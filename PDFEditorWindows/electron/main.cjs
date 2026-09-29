@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const path = require("node:path");
 const { buildMenu } = require("./menu.cjs");
+const fonts = require("./fonts.cjs");
 
 const APP_TITLE = "PDF 編輯器";
 const DIST = path.join(__dirname, "..", "dist");
@@ -246,6 +247,7 @@ function registerIpc() {
   });
 
   ipcMain.handle("print", (_e, pages) => printPages(pages));
+  ipcMain.handle("fonts:resolve", (_e, request) => fonts.resolveFont(request));
 }
 
 /** 以隱藏視窗載入每頁的圖片後呼叫系統列印對話框。 */
@@ -282,6 +284,7 @@ app.whenReady().then(() => {
   registerIpc();
   refreshMenu();
   createWindow();
+  fonts.warmUp();
 });
 
 app.on("window-all-closed", () => app.quit());

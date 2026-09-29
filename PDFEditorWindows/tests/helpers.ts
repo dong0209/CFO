@@ -30,3 +30,26 @@ export function makeStyledPdf(): Uint8Array {
   doc.insertPage(0, doc.addPage([0, 0, 595, 842], 0, { Font: { F1: bold, F2: plain } }, content));
   return doc.saveToBuffer("compress").asUint8Array().slice();
 }
+
+/** 取得 MuPDF 內建字型的字型檔（用來模擬「電腦上的字型」或「下載的字型」）。 */
+export function builtinFontBytes(name: string): Uint8Array {
+  const doc = new mupdf.PDFDocument();
+  const ref = doc.addFont(new mupdf.Font(name));
+  const descriptor = ref.resolve().get("DescendantFonts").get(0).resolve().get("FontDescriptor");
+  for (const key of ["FontFile2", "FontFile3", "FontFile"]) {
+    const file = descriptor.get(key);
+    if (file.isStream()) return file.readStream().asUint8Array().slice();
+  }
+  throw new Error("找不到字型檔");
+}
+
+/** 以內嵌（子集化）中文字型寫出一行文字的 PDF，模擬一般由 Word 等軟體輸出的文件。 */
+export function makeEmbeddedFontPdf(text: string): Uint8Array {
+  const doc = new mupdf.PDFDocument();
+  const font = new mupdf.Font("EmbeddedSong", builtinFontBytes("zh-Hant"));
+  const ref = doc.addFont(font);
+  const hex = [...text].map((ch) => font.encodeCharacter(ch).toString(16).padStart(4, "0")).join("");
+  doc.insertPage(0, doc.addPage([0, 0, 595, 842], 0, { Font: { F1: ref } }, `BT /F1 20 Tf 72 700 Td <${hex}> Tj ET`));
+  doc.subsetFonts();
+  return doc.saveToBuffer("garbage=compact,compress").asUint8Array().slice();
+}

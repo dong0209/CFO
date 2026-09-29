@@ -236,3 +236,5 @@ hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
 .edit-line { position: absolute; border: 1px dashed transparent; border-radius: 2px; pointer-events: none; }
 .page-overlay:hover .edit-line { border-color: rgba(15, 108, 189, 0.35); }
 .inline-text-editor { position: absolute; z-index: 5; padding: 0 3px; border: 1px solid var(--accent); border-radius: 3px; background: #fff; box-shadow: 0 0 0 3px var(--accent-soft); outline: none; line-height: 1; }
+.inline-text-status { position: absolute; z-index: 5; max-width: 520px; padding: 4px 8px; font-size: 12px; line-height: 1.5; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 4px; box-shadow: var(--shadow); pointer-events: none; }
+.inline-text-status .warning { color: var(--danger); font-weight: 600; }

@@ -1,7 +1,19 @@
+import type { FontRequest } from "../engine/fonts";
+
 export interface LoadedFile {
   path: string;
   name: string;
   data: Uint8Array;
+}
+
+export interface ResolvedFont {
+  data: Uint8Array;
+  /** 字型集合（.ttc）中的第幾個字型 */
+  index: number;
+  name: string;
+  source: "system" | "download";
+  /** true：與原字型相同；false：相近的替代字型 */
+  exact: boolean;
 }
 
 export interface MessageOptions {
@@ -33,6 +45,7 @@ export interface DesktopApi {
   initialFiles(): Promise<string[]>;
   confirmClose(): Promise<void>;
   print(pages: Array<{ data: Uint8Array; width: number; height: number }>): Promise<void>;
+  resolveFont(request: FontRequest): Promise<ResolvedFont | null>;
   pathForFile(file: File): string;
   onMenu(callback: (command: string) => void): () => void;
   onOpenFiles(callback: (paths: string[]) => void): () => void;

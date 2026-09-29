@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { inflate, normalizeRect, rectContains } from "../engine/geometry";
+import type { ReplaceResult } from "../engine/pdfEngine";
 import type { AnnotInfo, LinkInfo, MarkupKind, Point, Quad, Rect, ShapeKind, TextLine, WidgetInfo } from "../engine/types";
-import { api } from "../lib/api";
+import { api, type ResolvedFont } from "../lib/api";
 import { engine } from "../lib/engine";
 import { goToPage, mutate, selectTool } from "../state/actions";
-import { type DocTab, hexToRgb, rgbToHex, setState, updateTab, useStore } from "../state/store";
+import { type DocTab, hexToRgb, rgbToHex, setState, toast, updateTab, useStore } from "../state/store";
 import { prompt } from "./Modal";
 import { openSignatures } from "./dialogs/SignatureDialog";
 
@@ -334,11 +335,16 @@ export function PageView({ tab, pageIndex, scale }: Props) {
             key={`${revision}-${editingLine.index}`}
             line={editingLine}
             scale={scale}
-            onDone={async (value) => {
+            engineId={engineId}
+            pageIndex={pageIndex}
+            onDone={async (value, font) => {
               setEditingLine(null);
-              if (value !== null && value !== editingLine.text) {
-                await mutate("無法修改文字", () => engine.replaceTextLine(engineId, pageIndex, editingLine.index, value));
-              }
+              if (value === null || value === editingLine.text) return;
+              let result: ReplaceResult | undefined;
+              await mutate("無法修改文字", async () => {
+                result = await engine.replaceTextLine(engineId, pageIndex, editingLine.index, value, {}, font ? { data: font.data, index: font.index } : null);
+              });
+              if (result) toast(replaceMessage(result, font));
             }}
           />
         )}
@@ -417,50 +423,133 @@ function boxStyle([x0, y0, x1, y1]: Rect, scale: number): React.CSSProperties {
   return { left: x0 * scale, top: y0 * scale, width: (x1 - x0) * scale, height: (y1 - y0) * scale };
 }
 
-/** 在原文位置直接輸入新文字；外觀盡量貼近原字型、字級與顏色。 */
-function InlineTextEditor({ line, scale, onDone }: { line: TextLine; scale: number; onDone: (value: string | null) => void }) {
+function replaceMessage(result: ReplaceResult, font: ResolvedFont | null): string {
+  switch (result.font) {
+    case "embedded":
+      return "已修改文字（沿用原檔字型）";
+    case "supplied":
+      return `已修改文字（字型：${font?.name ?? ""}）`;
+    case "mixed":
+      return `已修改文字（字型：${font?.name ?? ""}，缺少的字元以標準字型補上）`;
+    default:
+      return "已修改文字（使用標準字型）";
+  }
+}
+
+type FontStatus =
+  | { state: "resolving"; family: string }
+  | { state: "resolved"; font: ResolvedFont; family: string }
+  | { state: "missing"; family: string };
+
+let fontFaceCounter = 0;
+
+/** 在原文位置直接輸入新文字；會先辨識原字型、在電腦上尋找或自動下載，並以該字型預覽與寫入。 */
+function InlineTextEditor({ line, scale, engineId, pageIndex, onDone }: {
+  line: TextLine;
+  scale: number;
+  engineId: number;
+  pageIndex: number;
+  onDone: (value: string | null, font: ResolvedFont | null) => void;
+}) {
   const [value, setValue] = useState(line.text);
+  const [status, setStatus] = useState<FontStatus>({ state: "resolving", family: line.fontName });
+  const [cssFamily, setCssFamily] = useState<string | null>(null);
   const finished = useRef(false);
+  const committing = useRef(false);
+  const fontPromise = useRef<Promise<ResolvedFont | null>>(Promise.resolve(null));
   const ref = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     ref.current?.focus();
     ref.current?.select();
-  }, []);
-  const finish = (result: string | null) => {
-    if (finished.current) return;
+    let cancelled = false;
+    const promise = (async () => {
+      const request = await engine.fontRequest(engineId, pageIndex, line.index);
+      if (!cancelled) setStatus({ state: "resolving", family: request.originalName });
+      const font = await api().resolveFont(request).catch(() => null);
+      if (cancelled) return font;
+      if (!font) {
+        setStatus({ state: "missing", family: request.originalName });
+        return null;
+      }
+      setStatus({ state: "resolved", font, family: request.originalName });
+      // 讓編輯框以找到的字型顯示（字型集合 .ttc 無法直接載入，改用近似字型預覽）
+      if (font.index === 0) {
+        try {
+          const name = `PEFont${++fontFaceCounter}`;
+          const face = new FontFace(name, font.data.slice().buffer as ArrayBuffer);
+          await face.load();
+          document.fonts.add(face);
+          if (!cancelled) setCssFamily(name);
+        } catch {
+          // 無法預覽時仍可寫入
+        }
+      }
+      return font;
+    })();
+    fontPromise.current = promise;
+    return () => {
+      cancelled = true;
+    };
+  }, [engineId, pageIndex, line.index]);
+
+  const finish = async (result: string | null) => {
+    if (finished.current || committing.current) return;
+    if (result === null) {
+      finished.current = true;
+      onDone(null, null);
+      return;
+    }
+    committing.current = true;
+    const font = await fontPromise.current.catch(() => null);
     finished.current = true;
-    onDone(result);
+    onDone(result, font);
   };
+
   const [x0, y0, x1, y1] = line.bbox;
   const fontSize = line.size * scale;
-  const family = line.mono ? '"Courier New", monospace' : line.serif ? '"Times New Roman", "PMingLiU", "MingLiU", serif' : 'Arial, "Microsoft JhengHei", sans-serif';
+  const fallbackFamily = line.mono ? '"Courier New", monospace' : line.serif ? '"Times New Roman", "PMingLiU", "MingLiU", serif' : 'Arial, "Microsoft JhengHei", sans-serif';
+  const family = cssFamily ? `"${cssFamily}", ${fallbackFamily}` : fallbackFamily;
   const width = Math.max((x1 - x0) * scale, value.length * fontSize * 0.62) + fontSize;
+  const statusText =
+    status.state === "resolving"
+      ? `正在辨識字型「${status.family}」…`
+      : status.state === "resolved"
+        ? `${status.font.exact ? "字型" : `找不到「${status.family}」，改用相近字型`}：${status.font.name}（${status.font.source === "system" ? "電腦上的字型" : "已自動下載"}）`
+        : `找不到字型「${status.family}」，將使用標準字型`;
   return (
-    <input
-      ref={ref}
-      className="inline-text-editor"
-      value={value}
-      spellCheck={false}
-      style={{
-        left: x0 * scale - 3,
-        top: y0 * scale - 2,
-        width,
-        height: (y1 - y0) * scale + 4,
-        fontSize,
-        fontFamily: family,
-        fontWeight: line.bold ? 700 : 400,
-        fontStyle: line.italic ? "italic" : "normal",
-        color: rgbToHex(line.color),
-      }}
-      onPointerDown={(e) => e.stopPropagation()}
-      onChange={(e) => setValue(e.target.value)}
-      onKeyDown={(e) => {
-        e.stopPropagation();
-        if (e.nativeEvent.isComposing) return;
-        if (e.key === "Enter") finish(value);
-        else if (e.key === "Escape") finish(null);
-      }}
-      onBlur={() => finish(value)}
-    />
+    <>
+      <input
+        ref={ref}
+        className="inline-text-editor"
+        value={value}
+        spellCheck={false}
+        style={{
+          left: x0 * scale - 3,
+          top: y0 * scale - 2,
+          width,
+          height: (y1 - y0) * scale + 4,
+          fontSize,
+          fontFamily: family,
+          fontWeight: cssFamily ? undefined : line.bold ? 700 : 400,
+          fontStyle: cssFamily ? undefined : line.italic ? "italic" : "normal",
+          color: rgbToHex(line.color),
+        }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.nativeEvent.isComposing) return;
+          if (e.key === "Enter") finish(value);
+          else if (e.key === "Escape") finish(null);
+        }}
+        onBlur={() => finish(value)}
+      />
+      <div className="inline-text-status" style={{ left: x0 * scale - 3, top: y1 * scale + 6 }}>
+        {!line.textReliable && <div className="warning">⚠ 原文無法正確辨識（PDF 缺少字元對照表），請重新輸入整行文字</div>}
+        {line.embeddedFont && <div>原檔內嵌字型「{line.fontName}」，字形足夠時會直接沿用</div>}
+        <div>{statusText}</div>
+      </div>
+    </>
   );
 }

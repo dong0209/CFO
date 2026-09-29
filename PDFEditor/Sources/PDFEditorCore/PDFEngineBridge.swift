@@ -15,6 +15,10 @@ public struct EditableTextLine: Sendable, Equatable {
     public let isMonospaced: Bool
     /// sRGB，0–1
     public let color: [CGFloat]
+    /// 原字型是否內嵌在 PDF 中
+    public let hasEmbeddedFont: Bool
+    /// 原文是否可正確辨識（false 時 PDF 缺少字元對照表，應重新輸入整行）
+    public let isTextReliable: Bool
 
     public var nsColor: NSColor {
         NSColor(srgbRed: color[safe: 0] ?? 0, green: color[safe: 1] ?? 0, blue: color[safe: 2] ?? 0, alpha: 1)
@@ -193,8 +197,19 @@ public final class PDFEngineBridge: NSObject {
         return try Self.makeLine(dictionary)
     }
 
-    public func replaceTextLine(document id: Int, page: Int, line: Int, with text: String) async throws {
-        _ = try await call("replaceTextLine", [id, page, line, text])
+    /// 以新文字取代一行；回傳實際使用的字型來源（embedded／supplied／mixed／standard）。
+    @discardableResult
+    public func replaceTextLine(document id: Int, page: Int, line: Int, with text: String, font: ResolvedFont? = nil) async throws -> String {
+        let fontArgument: Any = font.map { ["data": $0.data, "index": $0.index] as [String: Any] } ?? NSNull()
+        let result = try await call("replaceTextLine", [id, page, line, text, [String: Any](), fontArgument]) as? [String: Any]
+        return result?["font"] as? String ?? "standard"
+    }
+
+    /// 辨識某行的字型，回傳尋找／下載字型的候選清單。
+    public func fontRequest(document id: Int, page: Int, line: Int) async throws -> FontRequest {
+        guard let dictionary = try await call("fontRequest", [id, page, line]) as? [String: Any],
+              let request = FontRequest(dictionary) else { throw PDFEngineError.invalidResponse("fontRequest") }
+        return request
     }
 
     public func save(document id: Int) async throws -> Data {
@@ -209,11 +224,19 @@ public final class PDFEngineBridge: NSObject {
         }
     }
 
-    /// 一次完成：以新文字取代某一行，回傳新的 PDF 資料。
-    public func replacingTextLine(in data: Data, password: String?, page: Int, line: Int, with text: String) async throws -> Data {
+    /// 一次完成：讀取點選位置的文字行與字型候選清單。
+    public func textLineWithFont(in data: Data, password: String?, page: Int, at point: CGPoint) async throws -> (EditableTextLine, FontRequest)? {
         try await withDocument(data, password: password) { id in
-            try await replaceTextLine(document: id, page: page, line: line, with: text)
-            return try await save(document: id)
+            guard let line = try await textLine(document: id, page: page, at: point) else { return nil }
+            return (line, try await fontRequest(document: id, page: page, line: line.index))
+        }
+    }
+
+    /// 一次完成：以新文字取代某一行，回傳新的 PDF 資料與實際使用的字型來源。
+    public func replacingTextLine(in data: Data, password: String?, page: Int, line: Int, with text: String, font: ResolvedFont? = nil) async throws -> (data: Data, fontSource: String) {
+        try await withDocument(data, password: password) { id in
+            let source = try await replaceTextLine(document: id, page: page, line: line, with: text, font: font)
+            return (try await save(document: id), source)
         }
     }
 
@@ -236,7 +259,9 @@ public final class PDFEngineBridge: NSObject {
             isItalic: d["italic"] as? Bool ?? false,
             isSerif: d["serif"] as? Bool ?? false,
             isMonospaced: d["mono"] as? Bool ?? false,
-            color: numbers("color")
+            color: numbers("color"),
+            hasEmbeddedFont: d["embeddedFont"] as? Bool ?? false,
+            isTextReliable: d["textReliable"] as? Bool ?? true
         )
     }
 }

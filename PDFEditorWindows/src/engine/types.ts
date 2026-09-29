@@ -145,4 +145,8 @@ export interface TextLine {
   serif: boolean;
   mono: boolean;
   color: RGB;
+  /** 原字型是否內嵌在 PDF 中 */
+  embeddedFont: boolean;
+  /** 原文是否可正確辨識；false 時通常是 PDF 缺少字元對照表，應重新輸入整行 */
+  textReliable: boolean;
 }

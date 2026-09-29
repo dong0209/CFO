@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld("api", {
   initialFiles: () => ipcRenderer.invoke("window:initial-files"),
   confirmClose: () => ipcRenderer.invoke("window:confirm-close"),
   print: (pages) => ipcRenderer.invoke("print", pages),
+  resolveFont: (request) => ipcRenderer.invoke("fonts:resolve", request),
   pathForFile: (file) => webUtils.getPathForFile(file),
   onMenu: on("menu"),
   onOpenFiles: on("open-files"),

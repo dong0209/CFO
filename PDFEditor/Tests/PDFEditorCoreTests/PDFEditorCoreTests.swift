@@ -262,7 +262,7 @@ final class TextEditEngineTests: XCTestCase {
         XCTAssertNil(missing)
 
         let edited = try await bridge.replacingTextLine(in: original, password: nil, page: 1, line: found.index, with: "第二章 Chapter")
-        let document = try XCTUnwrap(PDFDocument(data: edited))
+        let document = try XCTUnwrap(PDFDocument(data: edited.data))
         XCTAssertEqual(document.pageCount, 2)
         let text = document.page(at: 1)?.string ?? ""
         XCTAssertTrue(text.contains("Chapter"), "新文字應寫入頁面：\(text)")
@@ -289,5 +289,66 @@ final class TextEditEngineTests: XCTestCase {
         } catch PDFEngineError.passwordRequired {}
         let line = try await PDFEngineBridge.shared.textLine(in: data, password: "pw", page: 0, at: CGPoint(x: 90, y: 708))
         XCTAssertEqual(line?.text, "Page 1")
+    }
+}
+
+final class FontResolverTests: XCTestCase {
+    func testGoogleFontsURLs() {
+        XCTAssertEqual(FontResolver.cssURL(family: "Noto Sans TC", weight: 700, italic: false)?.absoluteString, "https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@700")
+        XCTAssertEqual(FontResolver.cssURL(family: "Roboto", weight: 400, italic: true)?.absoluteString, "https://fonts.googleapis.com/css2?family=Roboto:ital,wght@1,400")
+        XCTAssertEqual(FontResolver.fontURL(fromCSS: "src: url(https://fonts.gstatic.com/s/x/a.ttf) format('truetype');")?.absoluteString, "https://fonts.gstatic.com/s/x/a.ttf")
+        XCTAssertNil(FontResolver.fontURL(fromCSS: "<html>"))
+    }
+
+    func testFindsInstalledFontInCollection() async throws {
+        let request = FontRequest(originalName: "Helvetica-Bold", family: "Helvetica", weight: 700, italic: false,
+                                  system: [.init(family: "Helvetica-Bold", exact: true), .init(family: "Helvetica", exact: true)], downloads: [])
+        let resolved = try await XCTUnwrap(FontResolver(cacheDirectory: FileManager.default.temporaryDirectory).resolve(request))
+        XCTAssertEqual(resolved.source, .system)
+        XCTAssertTrue(resolved.exact)
+        let font = try XCTUnwrap(resolved.nsFont(size: 20))
+        XCTAssertEqual(font.fontName, "Helvetica-Bold")
+    }
+
+    func testDownloadsAndCachesGoogleFont() async throws {
+        let cache = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: cache) }
+        let request = FontRequest(originalName: "Roboto-Bold", family: "Roboto", weight: 700, italic: false,
+                                  system: [.init(family: "RobotoNotInstalledHere", exact: true)], downloads: [.init(family: "Roboto", exact: true)])
+        let resolver = FontResolver(cacheDirectory: cache)
+        guard let resolved = await resolver.resolve(request) else {
+            throw XCTSkip("無法連線到 Google Fonts")
+        }
+        XCTAssertEqual(resolved.source, .download)
+        XCTAssertEqual(resolved.name, "Roboto Bold")
+        XCTAssertNotNil(resolved.nsFont(size: 12))
+        let cached = try FileManager.default.contentsOfDirectory(atPath: cache.path)
+        XCTAssertEqual(cached, ["Roboto-700.ttf"])
+
+        let unknown = FontRequest(originalName: "X", family: "X", weight: 400, italic: false, system: [], downloads: [.init(family: "Definitely Not A Real Font Name", exact: true)])
+        let missing = await resolver.resolve(unknown)
+        XCTAssertNil(missing)
+    }
+
+    @MainActor
+    func testReplaceLineWithResolvedFont() async throws {
+        guard PDFEngineBridge.engineDirectory != nil else {
+            throw XCTSkip("尚未建置文字編輯引擎")
+        }
+        _ = NSApplication.shared
+        let original = try XCTUnwrap(makeDocument(pages: 1).dataRepresentation())
+        let bridge = PDFEngineBridge.shared
+        let found = try await bridge.textLineWithFont(in: original, password: nil, page: 0, at: CGPoint(x: 90, y: 708))
+        let (line, request) = try XCTUnwrap(found)
+        XCTAssertEqual(line.text, "Page 1")
+        XCTAssertFalse(request.system.isEmpty)
+
+        let helvetica = FontRequest(originalName: "Helvetica", family: "Helvetica", weight: 400, italic: false, system: [.init(family: "Helvetica", exact: true)], downloads: [])
+        let font = try await XCTUnwrap(FontResolver.shared.resolve(helvetica))
+        let edited = try await bridge.replacingTextLine(in: original, password: nil, page: 0, line: line.index, with: "Hello 你好", font: font)
+        XCTAssertTrue(["supplied", "mixed"].contains(edited.fontSource), edited.fontSource)
+        let text = try XCTUnwrap(PDFDocument(data: edited.data)?.page(at: 0)?.string)
+        XCTAssertTrue(text.contains("Hello"), text)
+        XCTAssertTrue(text.contains("你好"), text)
     }
 }

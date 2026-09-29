@@ -58,7 +58,18 @@ function makeScanned(path) {
   writeFileSync(path, doc.saveToBuffer("").asUint8Array());
 }
 
+/** 使用未內嵌的 Roboto 字型（電腦上通常沒有，會觸發自動下載） */
+function makeRobotoSample(path) {
+  const doc = new mupdf.PDFDocument();
+  const font = doc.addSimpleFont(new mupdf.Font("Helvetica"));
+  font.resolve().put("BaseFont", doc.newName("Roboto-Bold"));
+  doc.insertPage(0, doc.addPage([0, 0, 595, 842], 0, { Font: { F1: font } }, "BT /F1 28 Tf 72 740 Td (Quarterly Report) Tj ET"));
+  writeFileSync(path, doc.saveToBuffer("").asUint8Array());
+}
+
 const sample = join(work, "範例文件.pdf");
+const robotoSample = join(work, "Roboto 文件.pdf");
+makeRobotoSample(robotoSample);
 const scanned = join(work, "掃描檔.pdf");
 makeSample(sample);
 makeScanned(scanned);
@@ -150,6 +161,7 @@ try {
   const inline = page.locator(".inline-text-editor");
   await inline.waitFor();
   assert.equal(await inline.inputValue(), "Page 1");
+  await page.waitForFunction(() => !document.querySelector(".inline-text-status")?.textContent?.includes("正在辨識"), null, { timeout: 60000 });
   await shot("02a-直接編輯文字");
   await inline.fill("第一章 Chapter 1");
   await page.keyboard.press("Enter");
@@ -288,6 +300,48 @@ try {
   await menu("close-tab");
   await page.waitForTimeout(400);
   assert.equal(await page.locator(".tab").count(), 1);
+
+  step("編輯文字：自動下載原字型（Roboto）並嵌入");
+  await app.evaluate(({ BrowserWindow }, p) => BrowserWindow.getAllWindows()[0].webContents.send("open-files", [p]), robotoSample);
+  await page.waitForFunction(() => [...document.querySelectorAll(".tab.active .tab-name")].some((t) => t.textContent === "Roboto 文件.pdf"));
+  await page.waitForTimeout(800);
+  await menu("tool:edittext");
+  box = await pageBox(0);
+  await page.mouse.click(...box.at(120, 94));
+  await page.locator(".inline-text-editor").waitFor();
+  await page.waitForFunction(() => !document.querySelector(".inline-text-status")?.textContent?.includes("正在辨識"), null, { timeout: 90000 });
+  const fontStatus = await page.locator(".inline-text-status").textContent();
+  console.log("   字型狀態：", fontStatus);
+  // 無法連網的環境（E2E_NO_FONT_DOWNLOAD=1）改驗證「找不到字型時改用標準字型」
+  const offline = process.env.E2E_NO_FONT_DOWNLOAD === "1";
+  if (offline) assert.match(fontStatus, /找不到字型「Roboto」/);
+  else assert.match(fontStatus, /Roboto.*已自動下載/, "應自動下載 Roboto");
+  await shot("10-自動下載字型");
+  await page.locator(".inline-text-editor").fill("Annual Report 年度報告");
+  await page.keyboard.press("Enter");
+  await page.waitForSelector('.toast:has-text("已修改文字")', { timeout: 10000 });
+  assert.match(await page.locator(".toast").textContent(), offline ? /標準字型/ : /Roboto/);
+  const robotoSaved = join(work, "Roboto 已編輯.pdf");
+  await mockSave(robotoSaved);
+  await menu("save-as");
+  await page.waitForFunction(() => [...document.querySelectorAll(".tab.active .tab-name")].some((t) => t.textContent === "Roboto 已編輯.pdf"), null, { timeout: 10000 });
+  {
+    const doc = openPdf(robotoSaved);
+    const pdfPage = doc.loadPage(0);
+    assert.ok(pdfPage.toStructuredText("").asText().includes("Annual Report 年度報告"));
+    const fontsDict = pdfPage.getObject().getInheritable("Resources").resolve().get("Font");
+    const embedded = [];
+    fontsDict.forEach((value, key) => {
+      if (!String(key).startsWith("PEE")) return;
+      const dict = value.resolve();
+      const descriptor = dict.get("DescendantFonts").get(0).resolve().get("FontDescriptor");
+      if (["FontFile2", "FontFile3"].some((k) => descriptor.get(k).isStream())) embedded.push(dict.get("BaseFont").asName());
+    });
+    console.log("   內嵌字型：", embedded.join(", "));
+    assert.ok(embedded.length > 0, "寫入的文字必須內嵌字型");
+    if (!offline) assert.ok(embedded.some((name) => /Roboto/i.test(name)), "Roboto 應內嵌在存出的 PDF 中");
+  }
+  await menu("close-tab");
 
   step("關閉全部分頁後回到歡迎畫面");
   await menu("close-tab");
