@@ -303,7 +303,8 @@ final class FontResolverTests: XCTestCase {
     func testFindsInstalledFontInCollection() async throws {
         let request = FontRequest(originalName: "Helvetica-Bold", family: "Helvetica", weight: 700, italic: false,
                                   system: [.init(family: "Helvetica-Bold", exact: true), .init(family: "Helvetica", exact: true)], downloads: [])
-        let resolved = try await XCTUnwrap(FontResolver(cacheDirectory: FileManager.default.temporaryDirectory).resolve(request))
+        let found = await FontResolver(cacheDirectory: FileManager.default.temporaryDirectory).resolve(request)
+        let resolved = try XCTUnwrap(found)
         XCTAssertEqual(resolved.source, .system)
         XCTAssertTrue(resolved.exact)
         let font = try XCTUnwrap(resolved.nsFont(size: 20))
@@ -344,7 +345,8 @@ final class FontResolverTests: XCTestCase {
         XCTAssertFalse(request.system.isEmpty)
 
         let helvetica = FontRequest(originalName: "Helvetica", family: "Helvetica", weight: 400, italic: false, system: [.init(family: "Helvetica", exact: true)], downloads: [])
-        let font = try await XCTUnwrap(FontResolver.shared.resolve(helvetica))
+        let resolvedFont = await FontResolver.shared.resolve(helvetica)
+        let font = try XCTUnwrap(resolvedFont)
         let edited = try await bridge.replacingTextLine(in: original, password: nil, page: 0, line: line.index, with: "Hello 你好", font: font)
         XCTAssertTrue(["supplied", "mixed"].contains(edited.fontSource), edited.fontSource)
         let text = try XCTUnwrap(PDFDocument(data: edited.data)?.page(at: 0)?.string)
