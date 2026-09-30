@@ -146,15 +146,18 @@ public actor FontResolver {
     }
 
     public func resolve(_ request: FontRequest) async -> ResolvedFont? {
-        for candidate in request.system {
-            if let font = await Self.systemFont(named: candidate.family, weight: request.weight, italic: request.italic) {
-                return ResolvedFont(data: font.data, index: font.index, name: font.name, source: .system, exact: candidate.exact)
+        // 先找同名字型（Mac 上 → 下載），再找相近字型（Mac 上 → 下載）
+        for exact in [true, false] {
+            for candidate in request.system where candidate.exact == exact {
+                if let font = await Self.systemFont(named: candidate.family, weight: request.weight, italic: request.italic) {
+                    return ResolvedFont(data: font.data, index: font.index, name: font.name, source: .system, exact: candidate.exact)
+                }
             }
-        }
-        for candidate in request.downloads {
-            if let downloaded = await download(family: candidate.family, weight: request.weight, italic: request.italic) {
-                let style = downloaded.weight >= 700 ? " Bold" : downloaded.weight != 400 ? " \(downloaded.weight)" : ""
-                return ResolvedFont(data: downloaded.data, index: 0, name: candidate.family + style, source: .download, exact: candidate.exact, url: downloaded.url)
+            for candidate in request.downloads where candidate.exact == exact {
+                if let downloaded = await download(family: candidate.family, weight: request.weight, italic: request.italic) {
+                    let style = downloaded.weight >= 700 ? " Bold" : downloaded.weight != 400 ? " \(downloaded.weight)" : ""
+                    return ResolvedFont(data: downloaded.data, index: 0, name: candidate.family + style, source: .download, exact: candidate.exact, url: downloaded.url)
+                }
             }
         }
         return nil
@@ -240,15 +243,15 @@ public actor FontResolver {
         let key = normalize(name)
         guard !key.isEmpty else { return nil }
         var font: NSFont?
-        if let exact = NSFont(name: name, size: 12), normalize(exact.fontName) == key || normalize(exact.displayName ?? "") == key {
-            font = exact
-        } else {
+        // 名稱是字族（例如 Helvetica）時依粗細與斜體挑選樣式；否則視為 PostScript 名稱或全名
+        let family = NSFontManager.shared.availableFontFamilies.first { normalize($0) == key || normalize(FontCatalog.displayName(of: $0)) == key }
+        if let family {
             let traits: NSFontTraitMask = italic ? .italicFontMask : []
-            let family = NSFontManager.shared.availableFontFamilies.first { normalize($0) == key || normalize(FontCatalog.displayName(of: $0)) == key }
-            if let family {
-                font = NSFontManager.shared.font(withFamily: family, traits: traits, weight: appKitWeight(weight), size: 12)
-                    ?? NSFontManager.shared.font(withFamily: family, traits: [], weight: appKitWeight(weight), size: 12)
-            }
+            font = NSFontManager.shared.font(withFamily: family, traits: traits, weight: appKitWeight(weight), size: 12)
+                ?? NSFontManager.shared.font(withFamily: family, traits: [], weight: appKitWeight(weight), size: 12)
+        }
+        if font == nil, let exact = NSFont(name: name, size: 12), normalize(exact.fontName) == key || normalize(exact.displayName ?? "") == key {
+            font = exact
         }
         guard let font,
               let url = CTFontCopyAttribute(font as CTFont, kCTFontURLAttribute) as? URL,

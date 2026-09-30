@@ -232,19 +232,22 @@ async function downloadGoogleFont(family, weight, italic) {
  * 回傳 { data, index, name, source: "system" | "download", exact } 或 null。
  */
 async function resolveFont(request) {
-  for (const candidate of request.system || []) {
-    const face = await findSystemFont(candidate.family, request.weight, request.italic);
-    if (face) {
-      const data = await fsp.readFile(face.file);
-      return { data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength), index: face.index, name: face.full[0] || face.family[0] || candidate.family, source: "system", exact: candidate.exact };
+  // 先找同名字型（電腦上 → 下載），再找相近字型（電腦上 → 下載）
+  for (const exact of [true, false]) {
+    for (const candidate of (request.system || []).filter((c) => c.exact === exact)) {
+      const face = await findSystemFont(candidate.family, request.weight, request.italic);
+      if (face) {
+        const data = await fsp.readFile(face.file);
+        return { data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength), index: face.index, name: face.full[0] || face.family[0] || candidate.family, source: "system", exact: candidate.exact };
+      }
     }
-  }
-  for (const candidate of request.downloads || []) {
-    const downloaded = await downloadGoogleFont(candidate.family, request.weight, request.italic);
-    if (downloaded) {
-      const data = await fsp.readFile(downloaded.file);
-      const style = downloaded.weight >= 700 ? " Bold" : downloaded.weight !== 400 ? ` ${downloaded.weight}` : "";
-      return { data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength), index: 0, name: `${candidate.family}${style}`, source: "download", exact: candidate.exact };
+    for (const candidate of (request.downloads || []).filter((c) => c.exact === exact)) {
+      const downloaded = await downloadGoogleFont(candidate.family, request.weight, request.italic);
+      if (downloaded) {
+        const data = await fsp.readFile(downloaded.file);
+        const style = downloaded.weight >= 700 ? " Bold" : downloaded.weight !== 400 ? ` ${downloaded.weight}` : "";
+        return { data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength), index: 0, name: `${candidate.family}${style}`, source: "download", exact: candidate.exact };
+      }
     }
   }
   return null;
