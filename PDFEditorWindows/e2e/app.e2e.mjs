@@ -172,7 +172,8 @@ try {
   await shot("02a-直接編輯文字");
   await inline.fill("第一章 Chapter 1");
   await page.keyboard.press("Enter");
-  await page.waitForTimeout(600);
+  await page.waitForSelector(".inline-text-editor", { state: "detached", timeout: 5000 });
+  await page.waitForSelector('.toast:has-text("已修改文字")', { timeout: 60000 });
 
   step("填寫表單欄位");
   await page.keyboard.press("v");

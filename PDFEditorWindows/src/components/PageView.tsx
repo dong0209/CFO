@@ -371,8 +371,10 @@ export function PageView({ tab, pageIndex, scale }: Props) {
             scale={scale}
             engineId={engineId}
             pageIndex={pageIndex}
-            onDone={async (edit) => {
+            onDone={async (pending) => {
+              // 編輯框立即關閉，字型在背景準備好後再寫入
               setEditingLine(null);
+              const edit = await pending;
               if (!edit) return;
               let result: ReplaceResult | undefined;
               await mutate("無法修改文字", async () => {
@@ -507,7 +509,7 @@ function InlineTextEditor({ line, scale, engineId, pageIndex, onDone }: {
   scale: number;
   engineId: number;
   pageIndex: number;
-  onDone: (edit: InlineEdit | null) => void;
+  onDone: (edit: Promise<InlineEdit | null>) => void;
 }) {
   const initial: FontSettings = { choice: AUTO_FONT, bold: line.bold, italic: line.italic, size: line.size, color: rgbToHex(line.color) };
   const [value, setValue] = useState(line.text);
@@ -516,7 +518,6 @@ function InlineTextEditor({ line, scale, engineId, pageIndex, onDone }: {
   const [status, setStatus] = useState<FontStatus>({ state: "resolving", family: line.fontName });
   const [cssFamily, setCssFamily] = useState<string | null>(null);
   const finished = useRef(false);
-  const committing = useRef(false);
   const autoRequest = useRef<Promise<FontRequest | null> | null>(null);
   const fontPromise = useRef<ReturnType<typeof resolveChoice>>(Promise.resolve({ font: null, request: null }));
   const ref = useRef<HTMLInputElement>(null);
@@ -550,24 +551,29 @@ function InlineTextEditor({ line, scale, engineId, pageIndex, onDone }: {
     };
   }, [engineId, pageIndex, line.index, line.fontName, settings.choice, settings.bold, settings.italic]);
 
-  const finish = async (commit: boolean) => {
-    if (finished.current || committing.current) return;
+  const finish = (commit: boolean) => {
+    if (finished.current) return;
+    finished.current = true;
     const styleChanged = settings.size !== initial.size || settings.color !== initial.color || settings.bold !== initial.bold || settings.italic !== initial.italic;
     if (!commit || (value === line.text && !styleChanged && settings.choice.kind === "auto")) {
-      finished.current = true;
-      onDone(null);
+      onDone(Promise.resolve(null));
       return;
     }
-    committing.current = true;
-    const { font, request } = await fontPromise.current.catch(() => ({ font: null, request: null }));
-    const fallback = await resolveFallback(request, value);
-    finished.current = true;
-    const override: InlineEdit["override"] = {};
-    if (settings.size !== initial.size) override.size = settings.size;
-    if (settings.color !== initial.color || line.ocr) override.color = hexToRgb(settings.color);
-    if (settings.bold !== initial.bold) override.bold = settings.bold;
-    if (settings.italic !== initial.italic) override.italic = settings.italic;
-    onDone({ text: value, override, font, fallback, forceFont: settings.choice.kind !== "auto" });
+    const text = value;
+    const chosen = settings;
+    const pending = fontPromise.current;
+    onDone(
+      (async (): Promise<InlineEdit> => {
+        const { font, request } = await pending.catch(() => ({ font: null, request: null }));
+        const fallback = await resolveFallback(request, text);
+        const override: InlineEdit["override"] = {};
+        if (chosen.size !== initial.size) override.size = chosen.size;
+        if (chosen.color !== initial.color || line.ocr) override.color = hexToRgb(chosen.color);
+        if (chosen.bold !== initial.bold) override.bold = chosen.bold;
+        if (chosen.italic !== initial.italic) override.italic = chosen.italic;
+        return { text, override, font, fallback, forceFont: chosen.choice.kind !== "auto" };
+      })(),
+    );
   };
 
   const [x0, y0, x1, y1] = line.bbox;
