@@ -1,4 +1,5 @@
 import AppKit
+import PDFEditorCore
 import SwiftUI
 
 @main
@@ -29,6 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.activate(ignoringOtherApps: true)
+        // 先前下載過的開源字型註冊給本程式使用（文字方塊需要）
+        FontResolver.shared.registerCachedFonts()
         let arguments = CommandLine.arguments.dropFirst().filter { !$0.hasPrefix("-") }
         let urls = arguments.map { URL(fileURLWithPath: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
         if !urls.isEmpty {

@@ -19,6 +19,8 @@ public struct EditableTextLine: Sendable, Equatable {
     public let hasEmbeddedFont: Bool
     /// 原文是否可正確辨識（false 時 PDF 缺少字元對照表，應重新輸入整行）
     public let isTextReliable: Bool
+    /// OCR 辨識出的隱形文字（看得見的字形在掃描影像中；套用時會把影像中的原字改成背景色）
+    public let isOCR: Bool
 
     public var nsColor: NSColor {
         NSColor(srgbRed: color[safe: 0] ?? 0, green: color[safe: 1] ?? 0, blue: color[safe: 2] ?? 0, alpha: 1)
@@ -39,6 +41,43 @@ public struct EditableTextLine: Sendable, Equatable {
         if isBold { traits.insert(.boldFontMask) }
         if isItalic { traits.insert(.italicFontMask) }
         return traits.isEmpty ? base : NSFontManager.shared.convert(base, toHaveTrait: traits)
+    }
+}
+
+/// 修改文字時的字型與樣式設定。
+public struct TextEditOptions: Sendable {
+    /// Mac 上的或下載的字型
+    public var font: ResolvedFont?
+    /// 主要字型缺字時使用的字型（例如英文字型遇到中文）
+    public var fallbackFont: ResolvedFont?
+    /// 使用者自選字型：不沿用原檔字型
+    public var forceFont = false
+    public var size: CGFloat?
+    /// sRGB，0–1
+    public var color: [CGFloat]?
+    public var bold: Bool?
+    public var italic: Bool?
+
+    public init(font: ResolvedFont? = nil, fallbackFont: ResolvedFont? = nil, forceFont: Bool = false, size: CGFloat? = nil, color: [CGFloat]? = nil, bold: Bool? = nil, italic: Bool? = nil) {
+        self.font = font
+        self.fallbackFont = fallbackFont
+        self.forceFont = forceFont
+        self.size = size
+        self.color = color
+        self.bold = bold
+        self.italic = italic
+    }
+
+    var dictionary: [String: Any] {
+        var override: [String: Any] = [:]
+        if let size { override["size"] = Double(size) }
+        if let color { override["color"] = color.map(Double.init) }
+        if let bold { override["bold"] = bold }
+        if let italic { override["italic"] = italic }
+        var result: [String: Any] = ["override": override, "forceFont": forceFont]
+        if let font { result["font"] = ["data": font.data, "index": font.index] as [String: Any] }
+        if let fallbackFont { result["fallbackFont"] = ["data": fallbackFont.data, "index": fallbackFont.index] as [String: Any] }
+        return result
     }
 }
 
@@ -199,9 +238,8 @@ public final class PDFEngineBridge: NSObject {
 
     /// 以新文字取代一行；回傳實際使用的字型來源（embedded／supplied／mixed／standard）。
     @discardableResult
-    public func replaceTextLine(document id: Int, page: Int, line: Int, with text: String, font: ResolvedFont? = nil) async throws -> String {
-        let fontArgument: Any = font.map { ["data": $0.data, "index": $0.index] as [String: Any] } ?? NSNull()
-        let result = try await call("replaceTextLine", [id, page, line, text, [String: Any](), fontArgument]) as? [String: Any]
+    public func replaceTextLine(document id: Int, page: Int, line: Int, with text: String, options: TextEditOptions = TextEditOptions()) async throws -> String {
+        let result = try await call("replaceTextLine", [id, page, line, text, options.dictionary]) as? [String: Any]
         return result?["font"] as? String ?? "standard"
     }
 
@@ -233,9 +271,9 @@ public final class PDFEngineBridge: NSObject {
     }
 
     /// 一次完成：以新文字取代某一行，回傳新的 PDF 資料與實際使用的字型來源。
-    public func replacingTextLine(in data: Data, password: String?, page: Int, line: Int, with text: String, font: ResolvedFont? = nil) async throws -> (data: Data, fontSource: String) {
+    public func replacingTextLine(in data: Data, password: String?, page: Int, line: Int, with text: String, options: TextEditOptions = TextEditOptions()) async throws -> (data: Data, fontSource: String) {
         try await withDocument(data, password: password) { id in
-            let source = try await replaceTextLine(document: id, page: page, line: line, with: text, font: font)
+            let source = try await replaceTextLine(document: id, page: page, line: line, with: text, options: options)
             return (try await save(document: id), source)
         }
     }
@@ -261,7 +299,8 @@ public final class PDFEngineBridge: NSObject {
             isMonospaced: d["mono"] as? Bool ?? false,
             color: numbers("color"),
             hasEmbeddedFont: d["embeddedFont"] as? Bool ?? false,
-            isTextReliable: d["textReliable"] as? Bool ?? true
+            isTextReliable: d["textReliable"] as? Bool ?? true,
+            isOCR: d["ocr"] as? Bool ?? false
         )
     }
 }

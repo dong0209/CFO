@@ -58,14 +58,20 @@ export function makeEmbeddedFontPdf(text: string): Uint8Array {
  * 模擬掃描檔：米色紙張上的深藍色文字「Scanned Invoice」整頁轉成影像（沒有文字層）。
  * 文字基線在頁面座標 y=142（PDF 座標 y=700），字級 36。
  */
-export function makeScannedPdf(): Uint8Array {
+export function makeScannedPdf(wrapInForm = false): Uint8Array {
   const source = new mupdf.PDFDocument();
   const font = source.addSimpleFont(new mupdf.Font("Helvetica"));
   source.insertPage(0, source.addPage([0, 0, 595, 842], 0, { Font: { F1: font } }, "0.95 0.93 0.85 rg 0 0 595 842 re f 0.1 0.1 0.45 rg BT /F1 36 Tf 72 700 Td (Scanned Invoice) Tj ET 0 g BT /F1 14 Tf 72 600 Td (Keep this line) Tj ET"));
   const pixmap = source.loadPage(0).toPixmap(mupdf.Matrix.scale(2, 2), mupdf.ColorSpace.DeviceRGB, false);
   const doc = new mupdf.PDFDocument();
   const image = doc.addImage(new mupdf.Image(pixmap));
-  doc.insertPage(0, doc.addPage([0, 0, 595, 842], 0, { XObject: { Im0: image } }, "q 595 0 0 842 0 0 cm /Im0 Do Q"));
+  if (wrapInForm) {
+    // macOS 版 OCR 以 CoreGraphics 重畫頁面：原頁面內容成為表單 XObject
+    const form = doc.addStream("q 595 0 0 842 0 0 cm /Im0 Do Q", { Type: doc.newName("XObject"), Subtype: doc.newName("Form"), BBox: [0, 0, 595, 842], Resources: { XObject: { Im0: image } } });
+    doc.insertPage(0, doc.addPage([0, 0, 595, 842], 0, { XObject: { Fm0: form } }, "/Fm0 Do"));
+  } else {
+    doc.insertPage(0, doc.addPage([0, 0, 595, 842], 0, { XObject: { Im0: image } }, "q 595 0 0 842 0 0 cm /Im0 Do Q"));
+  }
   return doc.saveToBuffer("compress").asUint8Array().slice();
 }
 

@@ -79,7 +79,7 @@ final class EditorPDFView: PDFView {
             editor.addNote(at: point, on: page, color: tools.nsColor)
 
         case .textBox:
-            Workspace.shared.textBoxRequest = TextBoxRequest(page: page, point: point, annotation: nil)
+            Workspace.shared.showTextBox(TextBoxRequest(page: page, point: point, annotation: nil))
 
         case .image, .signature:
             if let image = tools.pendingImage {
@@ -229,42 +229,63 @@ final class EditorPDFView: PDFView {
 
     private var inlineEditor: InlineTextField?
     private var inlineStatus: NSTextField?
+    private var inlineToolbar: InlineFontToolbar?
     private var inlineObservers: [NSObjectProtocol] = []
+    private var inlineSettings: InlineFontSettings?
+    private var inlineAutoRequest: FontRequest?
+    private var inlineFontTask: Task<(font: ResolvedFont?, request: FontRequest?), Never>?
 
-    /// 在文字行的位置顯示編輯框；同時辨識並尋找原字型，找到後以該字型預覽。完成時回傳新文字（取消為 nil）。
-    func showInlineEditor(for line: EditableTextLine, request: FontRequest, font: Task<ResolvedFont?, Never>, on page: PDFPage, completion: @escaping (String?) -> Void) {
+    /// 在文字行的位置顯示編輯框與字型工具列；預設「自動」會辨識並尋找原字型，找到後以該字型預覽。
+    /// 完成時回傳新文字與字型設定（取消為 nil）。
+    func showInlineEditor(for line: EditableTextLine, request: FontRequest, on page: PDFPage, completion: @escaping (InlineEditResult?) -> Void) {
         endInlineEditing()
+        let settings = InlineFontSettings(choice: .auto, bold: line.isBold, italic: line.isItalic, size: line.fontSize, color: line.nsColor)
+        inlineSettings = settings
+        inlineAutoRequest = request
+
         let field = InlineTextField(line: line, page: page) { [weak self] value in
-            self?.removeInlineObservers()
-            self?.inlineEditor = nil
-            self?.inlineStatus?.removeFromSuperview()
-            self?.inlineStatus = nil
-            completion(value)
+            guard let self else { return }
+            let finalSettings = self.inlineSettings ?? settings
+            let task = self.inlineFontTask
+            self.teardownInlineEditor()
+            guard let value, let task else {
+                completion(nil)
+                return
+            }
+            completion(InlineEditResult(text: value, settings: finalSettings, font: task))
         }
         inlineEditor = field
         addSubview(field)
+
+        let toolbar = InlineFontToolbar(settings: settings, autoName: line.isOCR ? "掃描影像中的文字" : request.originalName)
+        toolbar.onChange = { [weak self] newSettings in
+            guard let self else { return }
+            let previous = self.inlineSettings
+            self.inlineSettings = newSettings
+            self.inlineEditor?.textColor = newSettings.color
+            if previous?.choice != newSettings.choice || previous?.bold != newSettings.bold || previous?.italic != newSettings.italic {
+                self.resolveInlineFont()
+            }
+            self.positionInlineEditor()
+        }
+        toolbar.onApply = { [weak self] in self?.inlineEditor?.finish(commit: true) }
+        toolbar.onCancel = { [weak self] in self?.inlineEditor?.finish(commit: false) }
+        inlineToolbar = toolbar
+        addSubview(toolbar)
 
         let status = NSTextField(wrappingLabelWithString: "")
         status.font = .systemFont(ofSize: 11)
         status.drawsBackground = true
         status.backgroundColor = .windowBackgroundColor
         status.isBordered = true
-        status.maximumNumberOfLines = 3
+        status.maximumNumberOfLines = 4
         inlineStatus = status
         addSubview(status)
-        updateInlineStatus(line: line, request: request, font: nil, resolving: true)
 
+        resolveInlineFont()
         positionInlineEditor()
         window?.makeFirstResponder(field)
         field.currentEditor()?.selectAll(nil)
-
-        Task { @MainActor [weak self, weak field] in
-            let resolved = await font.value
-            guard let self, let field, self.inlineEditor === field else { return }
-            field.previewFont = resolved
-            self.updateInlineStatus(line: line, request: request, font: resolved, resolving: false)
-            self.positionInlineEditor()
-        }
 
         let center = NotificationCenter.default
         let reposition: (Notification) -> Void = { [weak self] _ in
@@ -277,21 +298,47 @@ final class EditorPDFView: PDFView {
         inlineObservers.append(center.addObserver(forName: .PDFViewScaleChanged, object: self, queue: .main, using: reposition))
     }
 
-    private func updateInlineStatus(line: EditableTextLine, request: FontRequest, font: ResolvedFont?, resolving: Bool) {
+    /// 依目前的字型選擇（自動或自選）在背景尋找字型，完成後更新預覽與狀態。
+    private func resolveInlineFont() {
+        guard let field = inlineEditor, let settings = inlineSettings else { return }
+        let autoRequest = inlineAutoRequest
+        let (choice, bold, italic) = (settings.choice, settings.bold, settings.italic)
+        let task = Task { await FontResolver.shared.resolve(choice: choice, bold: bold, italic: italic, autoRequest: autoRequest) }
+        inlineFontTask = task
+        field.previewFont = nil
+        updateInlineStatus(font: nil, resolving: true)
+        Task { @MainActor [weak self, weak field] in
+            let resolved = await task.value
+            guard let self, let field, self.inlineEditor === field, self.inlineFontTask == task else { return }
+            field.previewFont = resolved.font
+            self.updateInlineStatus(font: resolved.font, resolving: false)
+            self.positionInlineEditor()
+        }
+    }
+
+    private func updateInlineStatus(font: ResolvedFont?, resolving: Bool) {
+        guard let line = inlineEditor?.line, let settings = inlineSettings else { return }
+        let wanted = settings.choice.family ?? (line.isOCR ? "掃描影像中的文字" : inlineAutoRequest?.originalName ?? line.fontName)
         var lines: [String] = []
         if !line.isTextReliable {
             lines.append("⚠ 原文無法正確辨識（PDF 缺少字元對照表），請重新輸入整行文字")
         }
-        if line.hasEmbeddedFont {
-            lines.append("原檔內嵌字型「\(request.originalName)」，字形足夠時會直接沿用")
+        if line.isOCR {
+            lines.append("這一行是 OCR 辨識出的掃描文字：套用後會把影像中的原字改成背景色，再寫入新文字")
+        }
+        if line.hasEmbeddedFont, settings.choice == .auto {
+            lines.append("原檔內嵌字型「\(line.fontName)」，字形足夠時會直接沿用")
         }
         if resolving {
-            lines.append("正在辨識字型「\(request.originalName)」…")
+            lines.append("正在尋找字型「\(wanted)」…")
         } else if let font {
-            let source = font.source == .system ? "Mac 上的字型" : "已自動下載"
-            lines.append(font.exact ? "字型：\(font.name)（\(source)）" : "找不到「\(request.originalName)」，改用相近字型：\(font.name)（\(source)）")
+            if settings.choice == .auto, !font.exact {
+                lines.append("找不到「\(wanted)」，改用相近字型：\(font.name)（\(font.sourceDescription)）")
+            } else {
+                lines.append("字型：\(font.name)（\(font.sourceDescription)）")
+            }
         } else {
-            lines.append("找不到字型「\(request.originalName)」，將使用標準字型")
+            lines.append("找不到字型「\(wanted)」，將使用標準字型")
         }
         inlineStatus?.stringValue = lines.joined(separator: "\n")
         inlineStatus?.textColor = line.isTextReliable ? .labelColor : .systemRed
@@ -302,24 +349,53 @@ final class EditorPDFView: PDFView {
         inlineEditor?.finish(commit: true)
     }
 
-    private func removeInlineObservers() {
+    private func teardownInlineEditor() {
         inlineObservers.forEach { NotificationCenter.default.removeObserver($0) }
         inlineObservers = []
+        inlineEditor = nil
+        inlineStatus?.removeFromSuperview()
+        inlineStatus = nil
+        inlineToolbar?.removeFromSuperview()
+        inlineToolbar = nil
+        inlineSettings = nil
+        inlineFontTask = nil
+        inlineAutoRequest = nil
     }
 
     private func positionInlineEditor() {
         guard let field = inlineEditor else { return }
+        let settings = inlineSettings
         let rect = convert(field.line.bounds, from: field.page)
-        let size = max(field.line.fontSize * scaleFactor, 4)
-        field.font = field.previewFont?.nsFont(size: size) ?? field.line.displayFont(scale: scaleFactor)
-        let textWidth = (field.stringValue as NSString).size(withAttributes: [.font: field.font as Any]).width
-        field.frame = CGRect(x: rect.minX - 4, y: rect.minY - 3, width: max(rect.width, textWidth) + 16, height: rect.height + 6)
+        let size = max((settings?.size ?? field.line.fontSize) * scaleFactor, 4)
+        let approximate = field.line.displayFont(scale: scaleFactor)
+        var font = field.previewFont?.nsFont(size: size) ?? NSFont(descriptor: approximate.fontDescriptor, size: size) ?? approximate
+        if field.previewFont == nil, let settings {
+            var traits: NSFontTraitMask = []
+            if settings.bold { traits.insert(.boldFontMask) }
+            if settings.italic { traits.insert(.italicFontMask) }
+            font = NSFontManager.shared.convert(font, toNotHaveTrait: [.boldFontMask, .italicFontMask])
+            if !traits.isEmpty { font = NSFontManager.shared.convert(font, toHaveTrait: traits) }
+        }
+        field.font = font
+        let textWidth = (field.stringValue as NSString).size(withAttributes: [.font: font]).width
+        let height = max(rect.height, size * 1.25)
+        field.frame = CGRect(x: rect.minX - 4, y: rect.minY - 3, width: max(rect.width, textWidth) + 16, height: height + 6)
+
+        // 工具列放在編輯框上方、狀態列放在下方（依座標系統是否翻轉決定方向；上方空間不足時工具列改放下方）
+        var below = field.frame
         if let status = inlineStatus {
             let fitting = status.sizeThatFits(CGSize(width: 460, height: 200))
             let width = min(max(fitting.width, 120), 460)
-            // 狀態列放在編輯框下方（依座標系統是否翻轉決定方向）
             let y = isFlipped ? field.frame.maxY + 6 : field.frame.minY - fitting.height - 6
             status.frame = CGRect(x: field.frame.minX, y: y, width: width, height: fitting.height)
+            below = status.frame
+        }
+        if let toolbar = inlineToolbar {
+            let fitting = toolbar.fittingSize
+            let aboveY = isFlipped ? field.frame.minY - fitting.height - 6 : field.frame.maxY + 6
+            let fitsAbove = isFlipped ? aboveY >= visibleRect.minY : aboveY + fitting.height <= visibleRect.maxY
+            let belowY = isFlipped ? below.maxY + 6 : below.minY - fitting.height - 6
+            toolbar.frame = CGRect(x: field.frame.minX, y: fitsAbove ? aboveY : belowY, width: fitting.width, height: fitting.height)
         }
     }
 
@@ -451,6 +527,13 @@ struct PDFKitView: NSViewRepresentable {
             }
         }
     }
+}
+
+/// 直接編輯文字的結果：新文字、字型設定與尋找中的字型。
+struct InlineEditResult {
+    let text: String
+    let settings: InlineFontSettings
+    let font: Task<(font: ResolvedFont?, request: FontRequest?), Never>
 }
 
 /// 直接編輯文字時覆蓋在原文上的輸入框（僅為畫面上的編輯介面，套用後會真正改寫頁面內容）。

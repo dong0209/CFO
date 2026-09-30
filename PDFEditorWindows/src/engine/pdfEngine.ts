@@ -1059,15 +1059,9 @@ export class PdfEngine {
       if (!rectsIntersect(bounds, area)) continue;
       const w = placed.image.getWidth();
       const h = placed.image.getHeight();
-      const resources = resolved(pageObj.getInheritable("Resources"));
-      const xobjects = resources.isDictionary() ? resolved(resources.get("XObject")) : null;
-      if (!xobjects?.isDictionary()) continue;
-      let name: string | null = null;
-      xobjects.forEach((value, key) => {
-        const subtype = value.get("Subtype");
-        if (name === null && value.isStream() && subtype.isName() && subtype.asName() === "Image" && value.get("Width").asNumber() === w && value.get("Height").asNumber() === h) name = String(key);
-      });
-      if (name === null) continue;
+      const pageResources = resolved(pageObj.getInheritable("Resources"));
+      const found = findImageXObject(pageResources, w, h, 0);
+      if (!found) continue;
       let pixmap = placed.image.toPixmap();
       const cs = pixmap.getColorSpace();
       if (!cs || !(cs.isRGB() || cs.isGray()) || pixmap.getAlpha()) {
@@ -1086,17 +1080,22 @@ export class PdfEngine {
       fillWithBackground(pixmap, px);
       const ref = doc.addImage(new mupdf.Image(pixmap));
       pixmap.destroy();
-      const oldImage = xobjects.get(name);
+      const oldImage = found.xobjects.get(found.name);
       for (const key of ["SMask", "Mask", "Interpolate"]) {
         const value = oldImage.get(key);
         if (!value.isNull()) ref.put(key, value);
       }
-      // 本頁使用自己的資源複本
-      const ownResources = doc.addObject(cloneDict(doc, resources));
-      const ownXObjects = cloneDict(doc, xobjects);
-      ownXObjects.put(name, ref);
-      ownResources.put("XObject", ownXObjects);
-      pageObj.put("Resources", ownResources);
+      if (found.depth === 0) {
+        // 本頁使用自己的資源複本，其他共用同一張影像的頁面不受影響
+        const ownResources = doc.addObject(cloneDict(doc, pageResources));
+        const ownXObjects = cloneDict(doc, found.xobjects);
+        ownXObjects.put(found.name, ref);
+        ownResources.put("XObject", ownXObjects);
+        pageObj.put("Resources", ownResources);
+      } else {
+        // 影像在表單 XObject 中（例如 macOS 版 OCR 產生的頁面），直接替換表單資源中的影像
+        found.xobjects.put(found.name, ref);
+      }
       changed = true;
     }
     return changed;
@@ -1300,6 +1299,30 @@ function scanPage(page: mupdf.PDFPage, wantImages: boolean): { invisible: Set<st
     device.close();
   }
   return { invisible, images };
+}
+
+/** 在資源（含巢狀表單 XObject）中找出指定像素大小的影像 XObject。 */
+function findImageXObject(resources: mupdf.PDFObject, w: number, h: number, depth: number): { xobjects: mupdf.PDFObject; name: string; depth: number } | null {
+  if (!resources.isDictionary()) return null;
+  const xobjects = resolved(resources.get("XObject"));
+  if (!xobjects.isDictionary()) return null;
+  let found: { xobjects: mupdf.PDFObject; name: string; depth: number } | null = null;
+  const forms: mupdf.PDFObject[] = [];
+  // 注意：不可對串流物件呼叫 resolve()（MuPDF.js 會讓之後存檔的串流損壞）；get() 會自動解析間接參照
+  xobjects.forEach((value, key) => {
+    if (found) return;
+    const subtype = value.get("Subtype");
+    if (!subtype.isName()) return;
+    if (subtype.asName() === "Image" && value.get("Width").asNumber() === w && value.get("Height").asNumber() === h) found = { xobjects, name: String(key), depth };
+    else if (subtype.asName() === "Form") forms.push(value);
+  });
+  if (found || depth >= 3) return found;
+  for (const form of forms) {
+    const inner = form.get("Resources");
+    const result = inner.isNull() ? null : findImageXObject(resolved(inner), w, h, depth + 1);
+    if (result) return result;
+  }
+  return null;
 }
 
 /** 頁面（含表單 XObject）資源中的所有字型字典。 */

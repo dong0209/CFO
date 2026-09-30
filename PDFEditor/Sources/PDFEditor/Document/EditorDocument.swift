@@ -195,13 +195,12 @@ final class EditorDocument: ObservableObject, Identifiable {
                     NSSound.beep()
                     return
                 }
-                // 背景尋找或下載原字型，編輯框先顯示，找到後以該字型預覽
-                let fontTask = Task { await FontResolver.shared.resolve(request) }
-                pdfView?.showInlineEditor(for: line, request: request, font: fontTask, on: currentPage) { [weak self] newText in
+                // 編輯框先顯示，背景尋找或下載原字型（或使用者自選的字型），找到後以該字型預覽
+                pdfView?.showInlineEditor(for: line, request: request, on: currentPage) { [weak self] result in
                     guard let self else { return }
                     self.isEditingText = false
-                    guard let newText, newText != line.text else { return }
-                    self.commitTextEdit(data: data, password: password, pageIndex: pageIndex, line: line, newText: newText, font: fontTask)
+                    guard let result else { return }
+                    self.commitTextEdit(data: data, password: password, pageIndex: pageIndex, line: line, result: result)
                 }
             } catch {
                 isEditingText = false
@@ -210,17 +209,36 @@ final class EditorDocument: ObservableObject, Identifiable {
         }
     }
 
-    private func commitTextEdit(data: Data, password: String?, pageIndex: Int, line: EditableTextLine, newText: String, font: Task<ResolvedFont?, Never>) {
+    private func commitTextEdit(data: Data, password: String?, pageIndex: Int, line: EditableTextLine, result: InlineEditResult) {
+        let settings = result.settings
+        let colorChanged = !Self.sameColor(settings.color, line.nsColor)
+        let styleChanged = abs(settings.size - line.fontSize) > 0.01 || colorChanged || settings.bold != line.isBold || settings.italic != line.isItalic
+        guard result.text != line.text || styleChanged || settings.choice != .auto else { return }
         Task { @MainActor in
             do {
-                let resolved = await font.value
-                let edited = try await PDFEngineBridge.shared.replacingTextLine(in: data, password: password, page: pageIndex, line: line.index, with: newText, font: resolved)
+                let resolved = await result.font.value
+                let fallback = await FontResolver.shared.resolveFallback(for: resolved.request, text: result.text)
+                var options = TextEditOptions(font: resolved.font, fallbackFont: fallback, forceFont: settings.choice != .auto)
+                if abs(settings.size - line.fontSize) > 0.01 { options.size = settings.size }
+                if colorChanged || line.isOCR { options.color = Self.srgbComponents(settings.color) }
+                if settings.bold != line.isBold { options.bold = settings.bold }
+                if settings.italic != line.isItalic { options.italic = settings.italic }
+                let edited = try await PDFEngineBridge.shared.replacingTextLine(in: data, password: password, page: pageIndex, line: line.index, with: result.text, options: options)
                 guard let document = PDFDocument(data: edited.data) else { throw PDFEngineError.invalidResponse("PDF") }
                 replaceDocument(with: document, actionName: "編輯文字")
             } catch {
                 Panels.showError(error, title: "無法修改文字")
             }
         }
+    }
+
+    private static func srgbComponents(_ color: NSColor) -> [CGFloat] {
+        let rgb = color.usingColorSpace(.sRGB) ?? .black
+        return [rgb.redComponent, rgb.greenComponent, rgb.blueComponent]
+    }
+
+    private static func sameColor(_ a: NSColor, _ b: NSColor) -> Bool {
+        zip(srgbComponents(a), srgbComponents(b)).allSatisfy { abs($0 - $1) < 0.01 }
     }
 
     /// 以新的 PDFDocument 取代目前內容（保留閱讀位置，可復原）。
@@ -243,7 +261,7 @@ final class EditorDocument: ObservableObject, Identifiable {
     /// 雙擊註解：文字方塊開啟文字樣式對話框，便利貼則直接編輯內容。
     func editText(of annotation: PDFAnnotation) {
         if annotation.isType(.freeText), let page = annotation.page {
-            Workspace.shared.textBoxRequest = TextBoxRequest(page: page, point: nil, annotation: annotation)
+            Workspace.shared.showTextBox(TextBoxRequest(page: page, point: nil, annotation: annotation))
             return
         }
         guard let text = Panels.promptText(title: "編輯備註", initial: annotation.contents ?? "", multiline: true) else { return }

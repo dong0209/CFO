@@ -270,6 +270,68 @@ final class TextEditEngineTests: XCTestCase {
         XCTAssertTrue((document.page(at: 0)?.string ?? "").contains("Page 1"), "其他頁面不受影響")
     }
 
+    /// 頁面某區域（PDF 座標）中的深色像素數量。
+    private func darkPixels(in page: PDFPage, rect: CGRect) -> Int {
+        guard let image = PageRenderer.image(for: page, dpi: 72, includeAnnotations: false) else { return -1 }
+        let width = image.width
+        let height = image.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn: Bool = pixels.withUnsafeMutableBytes { buffer in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drawn else { return -1 }
+        let bounds = page.bounds(for: .cropBox)
+        var count = 0
+        for y in Int(rect.minY)..<Int(rect.maxY) {
+            let row = height - 1 - (y - Int(bounds.minY))
+            guard row >= 0, row < height else { continue }
+            for x in Int(rect.minX)..<Int(rect.maxX) where x >= 0 && x < width {
+                let i = (row * width + x) * 4
+                if Int(pixels[i]) + Int(pixels[i + 1]) + Int(pixels[i + 2]) < 300 { count += 1 }
+            }
+        }
+        return count
+    }
+
+    @MainActor
+    func testEditOCRTextRemovesScannedGlyphs() async throws {
+        guard PDFEngineBridge.engineDirectory != nil else {
+            throw XCTSkip("尚未建置文字編輯引擎")
+        }
+        _ = NSApplication.shared
+        // 模擬掃描檔：整頁轉成影像，再以 OCR 加上隱形文字層（與「工具 ▸ 文字辨識」相同的方式）
+        let source = makeDocument(pages: 1)
+        let page = try XCTUnwrap(source.page(at: 0))
+        let mediaBox = page.bounds(for: .mediaBox)
+        let image = try XCTUnwrap(PageRenderer.image(for: page, dpi: 144))
+        let scanned = try XCTUnwrap(PageRenderer.makePage(like: page) { context in
+            context.draw(image, in: mediaBox)
+        })
+        let lineRect = CGRect(x: 70, y: 694, width: 82, height: 28)
+        let normalized = CGRect(x: lineRect.minX / mediaBox.width, y: lineRect.minY / mediaBox.height,
+                                width: lineRect.width / mediaBox.width, height: lineRect.height / mediaBox.height)
+        let ocrPage = try XCTUnwrap(OCRService.searchablePage(from: scanned, lines: [.init(text: "Page 1", normalizedBox: normalized)]))
+        let document = PDFDocument()
+        document.insert(ocrPage, at: 0)
+        let data = try XCTUnwrap(document.dataRepresentation())
+        let glyphArea = CGRect(x: 72, y: 697, width: 70, height: 20)
+        XCTAssertGreaterThan(darkPixels(in: ocrPage, rect: glyphArea), 30, "掃描影像中應有原本的字")
+
+        let bridge = PDFEngineBridge.shared
+        let found = try await bridge.textLine(in: data, password: nil, page: 0, at: CGPoint(x: 100, y: 705))
+        let line = try XCTUnwrap(found)
+        XCTAssertEqual(line.text, "Page 1")
+        XCTAssertTrue(line.isOCR, "應辨識為 OCR 文字")
+
+        let edited = try await bridge.replacingTextLine(in: data, password: nil, page: 0, line: line.index, with: "")
+        let editedPage = try XCTUnwrap(PDFDocument(data: edited.data)?.page(at: 0))
+        XCTAssertLessThan(darkPixels(in: editedPage, rect: glyphArea), 5, "影像中的原字應被移除")
+        XCTAssertFalse((editedPage.string ?? "").contains("Page 1"))
+    }
+
     @MainActor
     func testEncryptedDocumentNeedsPassword() async throws {
         guard PDFEngineBridge.engineDirectory != nil else {
@@ -298,6 +360,30 @@ final class FontResolverTests: XCTestCase {
         XCTAssertEqual(FontResolver.cssURL(family: "Roboto", weight: 400, italic: true)?.absoluteString, "https://fonts.googleapis.com/css2?family=Roboto:ital,wght@1,400")
         XCTAssertEqual(FontResolver.fontURL(fromCSS: "src: url(https://fonts.gstatic.com/s/x/a.ttf) format('truetype');")?.absoluteString, "https://fonts.gstatic.com/s/x/a.ttf")
         XCTAssertNil(FontResolver.fontURL(fromCSS: "<html>"))
+    }
+
+    func testChosenFontRequest() {
+        let roboto = FontRequest.chosen(family: "Roboto", weight: 700, italic: false, downloadable: true)
+        XCTAssertEqual(roboto.downloads, [.init(family: "Roboto", exact: true)])
+        XCTAssertTrue(roboto.system.isEmpty)
+        XCTAssertEqual(roboto.weight, 700)
+        XCTAssertEqual(roboto.fallback?.downloads.first?.family, "Noto Sans TC", "英文字型需要中文備援")
+        XCTAssertNil(FontRequest.chosen(family: "Noto Sans TC", weight: 400, italic: false, downloadable: true).fallback)
+        XCTAssertEqual(FontRequest.chosen(family: "PingFang TC", weight: 400, italic: false, downloadable: false).system.first?.family, "PingFang TC")
+        XCTAssertTrue(FontResolver.downloadableFamilies.contains("Noto Serif TC"))
+    }
+
+    func testResolvesChosenSystemFontWithStyle() async throws {
+        let resolver = FontResolver(cacheDirectory: FileManager.default.temporaryDirectory)
+        let result = await resolver.resolve(choice: .system("Helvetica"), bold: true, italic: false, autoRequest: nil)
+        let font = try XCTUnwrap(result.font)
+        XCTAssertEqual(font.source, .system)
+        XCTAssertEqual(font.nsFont(size: 12)?.fontName, "Helvetica-Bold")
+
+        let auto = FontRequest(originalName: "Helvetica", family: "Helvetica", weight: 400, italic: false, system: [.init(family: "Helvetica", exact: true)], downloads: [])
+        let bolded = await resolver.resolve(choice: .auto, bold: true, italic: false, autoRequest: auto)
+        XCTAssertEqual(bolded.request?.weight, 700)
+        XCTAssertEqual(bolded.font?.nsFont(size: 12)?.fontName, "Helvetica-Bold")
     }
 
     func testFindsInstalledFontInCollection() async throws {
@@ -347,7 +433,7 @@ final class FontResolverTests: XCTestCase {
         let helvetica = FontRequest(originalName: "Helvetica", family: "Helvetica", weight: 400, italic: false, system: [.init(family: "Helvetica", exact: true)], downloads: [])
         let resolvedFont = await FontResolver.shared.resolve(helvetica)
         let font = try XCTUnwrap(resolvedFont)
-        let edited = try await bridge.replacingTextLine(in: original, password: nil, page: 0, line: line.index, with: "Hello 你好", font: font)
+        let edited = try await bridge.replacingTextLine(in: original, password: nil, page: 0, line: line.index, with: "Hello 你好", options: TextEditOptions(font: font))
         XCTAssertTrue(["supplied", "mixed"].contains(edited.fontSource), edited.fontSource)
         let text = try XCTUnwrap(PDFDocument(data: edited.data)?.page(at: 0)?.string)
         XCTAssertTrue(text.contains("Hello"), text)

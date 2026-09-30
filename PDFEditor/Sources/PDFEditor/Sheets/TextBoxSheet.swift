@@ -11,15 +11,25 @@ enum FontLists {
 /// 字族選單：常用字型在前，其他字型依名稱排序。
 struct FontFamilyPicker: View {
     @Binding var family: String
+    /// 是否列出可自動下載的開源字型（選取時的值為 `download:字族`）
+    var includeDownloads = false
+
+    static let downloadPrefix = "download:"
 
     private var isListed: Bool {
         FontLists.grouped.recommended.contains { $0.name == family } || FontLists.grouped.others.contains { $0.name == family }
+            || (includeDownloads && family.hasPrefix(Self.downloadPrefix))
     }
 
     var body: some View {
         Picker("字型", selection: $family) {
             if !isListed {
                 Text(FontCatalog.displayName(of: family)).tag(family)
+            }
+            if includeDownloads {
+                Section("可自動下載的開源字型") {
+                    ForEach(FontResolver.downloadableFamilies, id: \.self) { Text($0).tag(Self.downloadPrefix + $0) }
+                }
             }
             Section("常用字型") {
                 ForEach(FontLists.grouped.recommended) { Text($0.displayName).tag($0.name) }
@@ -65,6 +75,8 @@ struct TextBoxSheet: View {
     @State private var face: String?
     @State private var size: Double
     @State private var color: Color
+    @State private var downloadStatus: String?
+    @State private var downloading = false
 
     init(request: TextBoxRequest, document: EditorDocument) {
         self.request = request
@@ -99,7 +111,7 @@ struct TextBoxSheet: View {
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.35)))
 
             HStack(spacing: 12) {
-                FontFamilyPicker(family: $family)
+                FontFamilyPicker(family: $family, includeDownloads: true)
                     .frame(width: 260)
                 FontFacePicker(family: family, face: $face)
                     .labelsHidden()
@@ -117,6 +129,10 @@ struct TextBoxSheet: View {
                     .labelsHidden()
                 Spacer()
                 ColorPicker("顏色", selection: $color, supportsOpacity: false)
+            }
+
+            if let downloadStatus {
+                Text(downloadStatus).font(.caption).foregroundStyle(.secondary)
             }
 
             Text("預覽").font(.caption).foregroundStyle(.secondary)
@@ -140,13 +156,38 @@ struct TextBoxSheet: View {
                 Button(isEditing ? "套用" : "加入") { commit() }
                     .keyboardShortcut(.return, modifiers: .command)
                     .buttonStyle(.borderedProminent)
-                    .disabled(isEmpty)
+                    .disabled(isEmpty || downloading)
             }
         }
         .padding(20)
         .frame(width: 560)
         .onChange(of: family) { newFamily in
-            face = FontCatalog.regularFace(of: newFamily)?.postScriptName
+            if newFamily.hasPrefix(FontFamilyPicker.downloadPrefix) {
+                download(String(newFamily.dropFirst(FontFamilyPicker.downloadPrefix.count)))
+            } else {
+                face = FontCatalog.regularFace(of: newFamily)?.postScriptName
+            }
+        }
+    }
+
+    /// 下載開源字型（一般與粗體）並註冊給本程式使用，完成後切換到該字型。
+    private func download(_ name: String) {
+        downloading = true
+        downloadStatus = "正在下載「\(name)」…（第一次使用需要連網，之後會快取）"
+        Task { @MainActor in
+            async let regular = FontResolver.shared.resolve(choice: .download(name), bold: false, italic: false, autoRequest: nil)
+            async let bold = FontResolver.shared.resolve(choice: .download(name), bold: true, italic: false, autoRequest: nil)
+            let (regularFont, boldFont) = await (regular.font, bold.font)
+            downloading = false
+            guard let regularFont, let registered = FontResolver.register(regularFont) else {
+                downloadStatus = "無法下載「\(name)」，請確認網路連線"
+                family = FontCatalog.defaultFamily
+                return
+            }
+            if let boldFont { _ = FontResolver.register(boldFont) }
+            downloadStatus = "已下載「\(name)」"
+            family = registered.familyName ?? name
+            face = registered.fontName
         }
     }
 

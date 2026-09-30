@@ -229,6 +229,16 @@ describe("編輯文字時的字型", () => {
     expect(info.rect[3] - info.rect[1]).toBeGreaterThan(28);
   });
 
+  it("OCR 文字：掃描影像在表單 XObject 中（macOS 版 OCR）也能真正移除", () => {
+    const { id } = engine.open(makeScannedPdf(true));
+    engine.applyOcr(id, 0, [{ text: "Scanned Invoice", bbox: [70, 112, 345, 152] }]);
+    expect(engine.textLines(id, 0)[0].ocr).toBe(true);
+    engine.replaceTextLine(id, 0, 0, "");
+    const saved = engine.save(id);
+    expect(Math.abs(regionColor(saved, [72, 118, 340, 150])[0] - 242)).toBeLessThan(8);
+    expect(regionColor(saved, [72, 232, 160, 244])[0]).toBeLessThan(200);
+  });
+
   it("提供字型建議清單", () => {
     const { id } = engine.open(makeStyledPdf());
     expect(engine.fontRequest(id, 0, 0)).toMatchObject({ family: "Times New Roman", weight: 700 });

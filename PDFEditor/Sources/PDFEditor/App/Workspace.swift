@@ -5,7 +5,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum SheetKind: String, Identifiable {
-    case watermark, pageNumbers, signatures, password, split, exportImages, ocr
+    case watermark, pageNumbers, signatures, password, split, exportImages, ocr, textBox
     var id: String { rawValue }
 }
 
@@ -56,7 +56,14 @@ final class Workspace: ObservableObject {
     @Published var currentID: UUID?
     @Published var activeSheet: SheetKind?
     @Published var progress: ProgressState?
-    @Published var textBoxRequest: TextBoxRequest?
+    /// 目前的文字方塊要求（以 activeSheet = .textBox 顯示對話框）
+    private(set) var textBoxRequest: TextBoxRequest?
+
+    /// 顯示新增／編輯文字方塊的對話框。
+    func showTextBox(_ request: TextBoxRequest) {
+        textBoxRequest = request
+        activeSheet = .textBox
+    }
     @Published private(set) var recentURLs: [URL] = []
     @Published var showSidebar = true
     @Published var sidebarTab: SidebarTab = .thumbnails

@@ -73,6 +73,10 @@ private struct SheetHost: View {
         case .split: SplitSheet(document: document)
         case .exportImages: ExportImagesSheet(document: document)
         case .ocr: OCRSheet(document: document)
+        case .textBox:
+            if let request = Workspace.shared.textBoxRequest {
+                TextBoxSheet(request: request, document: document)
+            }
         }
     }
 }
@@ -179,9 +183,6 @@ struct EditorView: View {
             }
             Divider()
             StatusBar(document: document)
-        }
-        .sheet(item: $workspace.textBoxRequest) { request in
-            TextBoxSheet(request: request, document: document)
         }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
