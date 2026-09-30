@@ -340,8 +340,8 @@ try {
   await shot("10-自動下載字型");
   await page.locator(".inline-text-editor").fill("Annual Report 年度報告");
   await page.keyboard.press("Enter");
-  await page.waitForSelector('.toast:has-text("已修改文字")', { timeout: 10000 });
-  assert.match(await page.locator(".toast").textContent(), offline ? /已修改文字/ : /Roboto/);
+  // 前一個步驟的提示可能還在畫面上，因此等待這次修改的提示
+  await page.waitForSelector(offline ? '.toast:has-text("已修改文字")' : '.toast:has-text("Roboto")', { timeout: 10000 });
   const robotoSaved = join(work, "Roboto 已編輯.pdf");
   await mockSave(robotoSaved);
   await menu("save-as");
