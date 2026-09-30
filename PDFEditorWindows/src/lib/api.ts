@@ -46,6 +46,8 @@ export interface DesktopApi {
   confirmClose(): Promise<void>;
   print(pages: Array<{ data: Uint8Array; width: number; height: number }>): Promise<void>;
   resolveFont(request: FontRequest): Promise<ResolvedFont | null>;
+  /** 電腦上已安裝的字族 */
+  listFonts(): Promise<Array<{ family: string; label: string }>>;
   pathForFile(file: File): string;
   onMenu(callback: (command: string) => void): () => void;
   onOpenFiles(callback: (paths: string[]) => void): () => void;

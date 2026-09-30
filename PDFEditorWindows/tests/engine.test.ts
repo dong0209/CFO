@@ -96,7 +96,7 @@ describe("註解", () => {
     expect(selection.text.trim()).toBe("Page 1");
     engine.addMarkup(id, 0, "Highlight", selection.quads, [1, 1, 0], selection.text);
     const note = engine.addNote(id, 0, [300, 300], "備註內容", [1, 0.8, 0]);
-    const text = engine.addFreeText(id, 0, [100, 400], "中文文字方塊", 14, [0, 0, 0]);
+    const text = engine.addFreeText(id, 0, [100, 400], "中文文字方塊", { fontSize: 14, color: [0, 0, 0], bold: false, italic: false });
     engine.addInk(id, 0, [[[10, 10], [50, 60], [90, 20]]], [1, 0, 0], 2);
     engine.addShape(id, 0, "arrow", [100, 100], [200, 150], [0, 0, 1], 2, false);
     engine.addShape(id, 0, "whiteout", [300, 500], [400, 540], [0, 0, 0], 1, false);

@@ -1,8 +1,8 @@
 import * as mupdf from "mupdf";
 import { beforeEach, describe, expect, it } from "vitest";
-import { cleanFontName, fontRequestFor, fontUrlFromCss, googleFontsCssUrl, isReliableText, parseFontName } from "../src/engine/fonts";
+import { chosenFontRequest, cleanFontName, fontRequestFor, fontUrlFromCss, googleFontsCssUrl, isReliableText, ocrFontRequest, parseFontName } from "../src/engine/fonts";
 import { PdfEngine } from "../src/engine/pdfEngine";
-import { builtinFontBytes, makeEmbeddedFontPdf, makeStyledPdf } from "./helpers";
+import { builtinFontBytes, makeEmbeddedFontPdf, makePdf, makeRenamedFontPdf, makeScannedPdf, makeStyledPdf, regionColor } from "./helpers";
 
 describe("字型名稱辨識", () => {
   it("解析字族、粗細與斜體", () => {
@@ -14,26 +14,57 @@ describe("字型名稱辨識", () => {
     expect(parseFontName("NotoSansCJKtc-Black")).toMatchObject({ weight: 900 });
   });
 
-  it("解碼 PDF 名稱中的中文", () => {
+  it("解碼 PDF 名稱中的中文（UTF-8、Big5、GBK）", () => {
     expect(cleanFontName("QWERTY+#E6#A8#99#E6#A5#B7#E9#AB#94")).toBe("標楷體");
+    const big5 = String.fromCharCode(0xb7, 0x73, 0xb2, 0xd3, 0xa9, 0xfa, 0xc5, 0xe9);
+    expect(cleanFontName(big5)).toBe("新細明體");
+    expect(cleanFontName("#B7#73#B2#D3#A9#FA#C5#E9")).toBe("新細明體");
+    expect(fontRequestFor(big5).downloads[0].family).toBe("Noto Serif TC");
+    expect(cleanFontName(String.fromCharCode(0xcb, 0xce, 0xcc, 0xe5))).toBe("宋体");
+  });
+
+  it("不認得的字型依名稱關鍵字與文字語系找相近字型", () => {
+    const ming = fontRequestFor("DFMingStd-W5", false, false, { text: "中文標題" });
+    expect(ming.weight).toBe(500);
+    expect(ming.downloads.map((c) => c.family)).toContain("Noto Serif TC");
+    expect(ming.system.map((c) => c.family)).toContain("PMingLiU");
+    expect(fontRequestFor("DFKaiShu-SB-Estd-BF").downloads.map((c) => c.family)).toContain("LXGW WenKai TC");
+    expect(fontRequestFor("HYQiHei-65S", false, false, { text: "內文" }).downloads.map((c) => c.family)).toContain("Noto Sans TC");
+    expect(fontRequestFor("SomeUnknownFont", false, false, { serif: true, text: "Hello" }).downloads.map((c) => c.family)).toContain("Tinos");
+  });
+
+  it("英文字型遇到中文時有中文備援字型", () => {
+    expect(fontRequestFor("ArialMT").fallback?.downloads[0].family).toBe("Noto Sans TC");
+    expect(fontRequestFor("TimesNewRomanPSMT").fallback?.downloads[0].family).toBe("Noto Serif TC");
+    expect(fontRequestFor("PMingLiU").fallback).toBeNull();
+  });
+
+  it("OCR 文字與手動選擇的字型", () => {
+    expect(ocrFontRequest("掃描文字").downloads[0].family).toBe("Noto Sans TC");
+    expect(ocrFontRequest("Scanned text").downloads[0].family).toBe("Arimo");
+    expect(chosenFontRequest("Roboto", 700, false, true)).toMatchObject({ system: [], downloads: [{ family: "Roboto", exact: true }], weight: 700 });
+    expect(chosenFontRequest("Microsoft JhengHei", 400, false, false).system[0].family).toBe("Microsoft JhengHei");
   });
 
   it("商用字型改用相容的開源字型", () => {
     const times = fontRequestFor("TimesNewRomanPSMT");
     expect(times.family).toBe("Times New Roman");
     expect(times.system.map((c) => c.family)).toContain("Times New Roman");
-    expect(times.downloads).toEqual([{ family: "Tinos", exact: false }]);
+    expect(times.downloads[0]).toEqual({ family: "Tinos", exact: false });
 
     expect(fontRequestFor("ArialMT").downloads[0].family).toBe("Arimo");
     expect(fontRequestFor("PMingLiU").downloads[0].family).toBe("Noto Serif TC");
     expect(fontRequestFor("#E6#A8#99#E6#A5#B7#E9#AB#94").downloads[0].family).toBe("LXGW WenKai TC");
-    expect(fontRequestFor("MicrosoftJhengHei-Bold")).toMatchObject({ weight: 700, downloads: [{ family: "Noto Sans TC", exact: false }] });
+    expect(fontRequestFor("MicrosoftJhengHei-Bold")).toMatchObject({ weight: 700 });
+    expect(fontRequestFor("MicrosoftJhengHei-Bold").downloads[0]).toEqual({ family: "Noto Sans TC", exact: false });
   });
 
   it("開源字型直接下載同一字型", () => {
-    expect(fontRequestFor("NotoSansCJKtc-Medium")).toMatchObject({ family: "Noto Sans TC", weight: 500, downloads: [{ family: "Noto Sans TC", exact: true }] });
+    expect(fontRequestFor("NotoSansCJKtc-Medium")).toMatchObject({ family: "Noto Sans TC", weight: 500 });
+    expect(fontRequestFor("NotoSansCJKtc-Medium").downloads[0]).toEqual({ family: "Noto Sans TC", exact: true });
     expect(fontRequestFor("SourceHanSerifTC-Bold").downloads[0]).toEqual({ family: "Noto Serif TC", exact: true });
-    expect(fontRequestFor("Roboto-Italic")).toMatchObject({ family: "Roboto", italic: true, downloads: [{ family: "Roboto", exact: true }] });
+    expect(fontRequestFor("Roboto-Italic")).toMatchObject({ family: "Roboto", italic: true });
+    expect(fontRequestFor("Roboto-Italic").downloads[0]).toEqual({ family: "Roboto", exact: true });
   });
 
   it("Google Fonts 網址與 CSS 解析", () => {
@@ -71,6 +102,21 @@ describe("編輯文字時的字型", () => {
     return ok && count > 0;
   }
 
+  /** 文字方塊外觀中的字型都已內嵌。 */
+  function editFontsAreEmbeddedIn(data: Uint8Array): boolean {
+    const doc = mupdf.Document.openDocument(data, "application/pdf").asPDF()!;
+    const annot = (doc.loadPage(0) as mupdf.PDFPage).getAnnotations()[0];
+    const fonts = annot.getObject().get("AP").get("N").get("Resources").get("Font");
+    let count = 0;
+    let ok = true;
+    fonts.forEach((value: mupdf.PDFObject) => {
+      count++;
+      const descriptor = value.get("DescendantFonts").get(0).get("FontDescriptor");
+      if (!["FontFile2", "FontFile3", "FontFile"].some((k) => descriptor.get(k).isStream())) ok = false;
+    });
+    return ok && count > 0;
+  }
+
   it("中文與英文寫入後都能正確讀回，且字型已內嵌", () => {
     const { id } = engine.open(makeStyledPdf());
     engine.replaceTextLine(id, 0, 0, "繁體中文 Mixed 標題 123！");
@@ -93,7 +139,7 @@ describe("編輯文字時的字型", () => {
   it("原檔字型缺字時改用提供的字型；沒有提供時用標準字型", () => {
     const pdf = makeEmbeddedFontPdf("原始文字");
     const withFont = engine.open(pdf).id;
-    const result = engine.replaceTextLine(withFont, 0, 0, "全新內容", {}, { data: builtinFontBytes("zh-Hant") });
+    const result = engine.replaceTextLine(withFont, 0, 0, "全新內容", { font: { data: builtinFontBytes("zh-Hant") } });
     expect(result.font).toBe("supplied");
     expect(engine.textLines(withFont, 0)[0].text).toBe("全新內容");
 
@@ -105,12 +151,87 @@ describe("編輯文字時的字型", () => {
   it("提供的字型缺字時，缺的字元以標準字型補上", () => {
     const { id } = engine.open(makeStyledPdf());
     const latinOnly = builtinFontBytes("Times-Roman");
-    expect(engine.replaceTextLine(id, 0, 0, "Title 標題", {}, { data: latinOnly }).font).toBe("mixed");
+    expect(engine.replaceTextLine(id, 0, 0, "Title 標題", { font: { data: latinOnly } }).font).toBe("mixed");
     expect(engine.textLines(id, 0)[0].text).toBe("Title 標題");
+  });
+
+  it("內嵌字型以 BaseFont 顯示名稱，並沿用原字型", () => {
+    const { id } = engine.open(makeRenamedFontPdf("ABCDEF+HanWangMingMedium", "公司簡介"));
+    const [line] = engine.textLines(id, 0);
+    expect(line).toMatchObject({ text: "公司簡介", fontName: "HanWangMingMedium", embeddedFont: true, ocr: false });
+    expect(engine.fontRequest(id, 0, 0).downloads.map((c) => c.family)).toContain("Noto Serif TC");
+    expect(engine.replaceTextLine(id, 0, 0, "簡介公司").font).toBe("embedded");
+  });
+
+  it("手動選擇字型時不沿用原檔字型", () => {
+    const { id } = engine.open(makeEmbeddedFontPdf("原始文字測試"));
+    const result = engine.replaceTextLine(id, 0, 0, "測試文字", { font: { data: builtinFontBytes("zh-Hant") }, forceFont: true, override: { size: 30, color: [1, 0, 0] } });
+    expect(result.font).toBe("supplied");
+    expect(engine.textLines(id, 0)[0]).toMatchObject({ text: "測試文字", size: 30, color: [1, 0, 0] });
+  });
+
+  it("OCR 文字：辨識為掃描文字，編輯後影像中的原字真正消失", () => {
+    const { id } = engine.open(makeScannedPdf());
+    engine.applyOcr(id, 0, [
+      { text: "Scanned Invoice", bbox: [70, 112, 345, 152] },
+      { text: "Keep this line", bbox: [70, 230, 170, 246] },
+    ]);
+    const [line] = engine.textLines(id, 0);
+    expect(line).toMatchObject({ text: "Scanned Invoice", ocr: true, fontName: "", embeddedFont: false });
+    // 顏色取樣自影像中的深藍色文字
+    expect(line.color[2]).toBeGreaterThan(line.color[0] + 0.15);
+    expect(engine.fontRequest(id, 0, 0).originalName).toContain("OCR");
+
+    const before = regionColor(engine.save(id), [72, 118, 340, 150]);
+    engine.replaceTextLine(id, 0, 0, "");
+    const saved = engine.save(id);
+    const after = regionColor(saved, [72, 118, 340, 150]);
+    // 原本的深色字消失，變回米色紙張
+    expect(after[0]).toBeGreaterThan(before[0] + 20);
+    expect(Math.abs(after[0] - 242)).toBeLessThan(8);
+    const reopened = engine.open(saved).id;
+    expect(engine.textLines(reopened, 0).map((l) => l.text)).toEqual(["Keep this line"]);
+    // 另一行影像不受影響
+    expect(regionColor(saved, [72, 232, 160, 244])[0]).toBeLessThan(200);
+
+    engine.undo(id);
+    engine.replaceTextLine(id, 0, 0, "Paid Invoice");
+    const lines = engine.textLines(id, 0);
+    expect(lines[0]).toMatchObject({ text: "Paid Invoice", ocr: false });
+  });
+
+  it("文字方塊使用自選字型，移動與重新開啟後外觀不變", () => {
+    const { id } = engine.open(makePdf(1));
+    const style = { fontSize: 20, color: [1, 0, 0] as [number, number, number], family: "Noto Sans TC", bold: true, italic: false };
+    const annotId = engine.addFreeText(id, 0, [100, 300], "自選字型 Font", style, { data: builtinFontBytes("zh-Hant") });
+    let info = engine.annotations(id, 0).find((a) => a.id === annotId)!;
+    expect(info.textStyle).toMatchObject({ family: "Noto Sans TC", bold: true, fontSize: 20, color: [1, 0, 0] });
+    const [x0, y0, x1, y1] = info.rect;
+    const red = (data: Uint8Array, r: [number, number, number, number]) => {
+      const c = regionColor(data, r, true);
+      return c[0] - c[1];
+    };
+    expect(red(engine.save(id), [x0, y0, x1, y1])).toBeGreaterThan(20);
+
+    engine.moveAnnotation(id, 0, annotId, 0, 200);
+    const saved = engine.save(id);
+    expect(red(saved, [x0, y0, x1, y1])).toBeLessThan(5);
+    expect(red(saved, [x0, y0 + 200, x1, y1 + 200])).toBeGreaterThan(20);
+    const reopened = engine.open(saved).id;
+    info = engine.annotations(reopened, 0)[0];
+    expect(info.rect[1]).toBeCloseTo(y0 + 200, 0);
+    expect(info.contents).toBe("自選字型 Font");
+    expect(editFontsAreEmbeddedIn(saved)).toBe(true);
+
+    engine.updateFreeText(id, 0, annotId, "第一行\n第二行較長的文字", { ...style, fontSize: 12 }, null);
+    info = engine.annotations(id, 0).find((a) => a.id === annotId)!;
+    expect(info.contents).toBe("第一行\n第二行較長的文字");
+    expect(info.rect[3] - info.rect[1]).toBeGreaterThan(28);
   });
 
   it("提供字型建議清單", () => {
     const { id } = engine.open(makeStyledPdf());
-    expect(engine.fontRequest(id, 0, 0)).toMatchObject({ family: "Times New Roman", weight: 700, downloads: [{ family: "Tinos", exact: false }] });
+    expect(engine.fontRequest(id, 0, 0)).toMatchObject({ family: "Times New Roman", weight: 700 });
+    expect(engine.fontRequest(id, 0, 0).downloads[0]).toEqual({ family: "Tinos", exact: false });
   });
 });

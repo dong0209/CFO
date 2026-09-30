@@ -250,9 +250,27 @@ async function resolveFont(request) {
   return null;
 }
 
+/**
+ * 電腦上已安裝的字族（字型選單用）。回傳 [{ family, label }]：family 為英文名稱（用來尋找字型），
+ * label 另外附上中文或日文名稱（例如「Microsoft JhengHei（微軟正黑體）」）。
+ */
+async function listFamilies() {
+  const faces = await systemFaces();
+  const families = new Map();
+  for (const face of faces) {
+    const names = face.family.filter((n) => n && !n.startsWith("."));
+    if (!names.length) continue;
+    const english = names.find((n) => /^[\x20-\x7e]+$/.test(n)) ?? names[0];
+    const local = names.find((n) => /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/.test(n));
+    const key = normalize(english);
+    if (!families.has(key)) families.set(key, { family: english, label: local && local !== english ? `${english}（${local}）` : english });
+  }
+  return [...families.values()].sort((a, b) => a.family.localeCompare(b.family));
+}
+
 /** 啟動後在背景建立字型索引，第一次編輯文字時就不必等待。 */
 function warmUp() {
   setTimeout(() => systemFaces(), 3000);
 }
 
-module.exports = { resolveFont, warmUp, readFontFile, findSystemFont };
+module.exports = { resolveFont, listFamilies, warmUp, readFontFile, findSystemFont };

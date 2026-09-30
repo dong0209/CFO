@@ -1,11 +1,11 @@
 import * as mupdf from "mupdf";
 import { centeredOrigin, concat, inflate, invert, normalizeRect, pointsBounds, quadBounds, rectContains, rectsIntersect, stampOrigin, textMatrix, transformPoint } from "./geometry";
-import { cleanFontName, type FontRequest, fontRequestFor, isReliableText } from "./fonts";
+import { cleanFontName, type FontRequest, fontRequestFor, isReliableText, ocrFontRequest } from "./fonts";
 import { chunk, moveItems, renderPageNumber } from "./pageRanges";
 import type {
   AnnotInfo, DocInfo, ImageFormat, LinkInfo, MarkupKind, Matrix, OcrLine, OpenResult, OutlineNode,
   PageInfo, PageNumberOptions, Point, Quad, Rect, RenderResult, RGB, SaveOptions, SearchHit, ShapeKind,
-  TextLine, TextSelection, WatermarkOptions, WidgetInfo, WidgetKind,
+  TextBoxStyle, TextLine, TextSelection, WatermarkOptions, WidgetInfo, WidgetKind,
 } from "./types";
 
 type OutlineItems = NonNullable<ReturnType<mupdf.PDFDocument["loadOutline"]>>;
@@ -13,12 +13,18 @@ type OutlineItems = NonNullable<ReturnType<mupdf.PDFDocument["loadOutline"]>>;
 const ROLE_KEY = "PDFEditorRole";
 const STAMP_KEY = "PDFEditorStamp";
 const WRAP_KEY = "PDFEditorWrap";
+const FONT_KEY = "PDFEditorFont";
+const FONT_STYLE_KEY = "PDFEditorFontStyle";
+/** 外觀由本程式以自選字型產生；移動時只平移外框，不可讓 MuPDF 重新產生外觀 */
+const CUSTOM_AP_KEY = "PDFEditorCustomAP";
 const A4: [number, number] = [595.28, 841.89];
 
 interface DocEntry {
   doc: mupdf.PDFDocument;
   /** 目前已驗證的開啟密碼 */
   password: string | null;
+  /** 字型字典（物件編號）載入後在 MuPDF 中的名稱 */
+  fontNames: Map<number, string | null>;
 }
 
 /**
@@ -126,7 +132,7 @@ export class PdfEngine {
 
   private register(doc: mupdf.PDFDocument): number {
     const id = this.nextId++;
-    this.docs.set(id, { doc, password: null });
+    this.docs.set(id, { doc, password: null, fontNames: new Map() });
     if (!doc.needsPassword()) this.ensureJournal(doc);
     return id;
   }
@@ -310,16 +316,63 @@ export class PdfEngine {
     });
   }
 
-  addFreeText(id: number, pageIndex: number, at: Point, text: string, fontSize: number, color: RGB): number {
-    return this.op(id, "文字方塊", () => {
+  /**
+   * 文字方塊：以使用者選的字型（`font`，缺字時用 `fallbackFont`）產生外觀並內嵌字型，
+   * 在任何 PDF 閱讀器中看起來都一樣。沒有提供字型時使用標準字型。
+   */
+  addFreeText(id: number, pageIndex: number, at: Point, text: string, style: TextBoxStyle, font: FontData | null = null, fallbackFont: FontData | null = null): number {
+    return this.op(id, "文字方塊", (doc) => {
       const annot = this.page(id, pageIndex).createAnnotation("FreeText");
-      annot.setRect(freeTextRect(at, text, fontSize));
-      annot.setDefaultAppearance("Helv", fontSize, color);
-      annot.setContents(text);
-      annot.setBorderWidth(0);
-      annot.update();
+      this.writeFreeText(doc, annot, at, text, style, font, fallbackFont);
       return annot.getObject().asIndirect();
     });
+  }
+
+  /** 修改文字方塊的文字與字型（位置不變）。 */
+  updateFreeText(id: number, pageIndex: number, annotId: number, text: string, style: TextBoxStyle, font: FontData | null = null, fallbackFont: FontData | null = null): void {
+    this.op(id, "編輯文字", (doc) => {
+      const annot = this.findAnnot(this.page(id, pageIndex), annotId);
+      const [x0, y0] = annot.getRect();
+      this.writeFreeText(doc, annot, [x0, y0], text, style, font, fallbackFont);
+    });
+  }
+
+  private writeFreeText(doc: mupdf.PDFDocument, annot: mupdf.PDFAnnotation, at: Point, text: string, style: TextBoxStyle, font: FontData | null, fallbackFont: FontData | null) {
+    const primary = [font, fallbackFont].map((f, i) => (f ? loadFont(i === 0 ? "TextBox" : "Fallback", f.data, f.index ?? 0) : null)).filter((f): f is mupdf.Font => f !== null);
+    const chain = this.fontChain({ bold: style.bold, italic: style.italic, serif: false, mono: false }, primary);
+    const size = style.fontSize;
+    const pad = 2;
+    const lineHeight = size * 1.25;
+    const lines = text.split("\n").map((line) => this.glyphRuns(line, chain));
+    const width = Math.max(size, ...lines.map((runs) => runs.reduce((sum, run) => sum + run.width, 0) * size)) + pad * 2;
+    const height = lines.length * lineHeight + pad * 2;
+
+    annot.setRect([at[0], at[1], at[0] + width, at[1] + height]);
+    annot.setDefaultAppearance("Helv", size, style.color);
+    annot.setContents(text);
+    annot.setBorderWidth(0);
+    annot.update();
+
+    const fonts = doc.newDictionary();
+    const used = new Map<mupdf.Font, Set<number>>();
+    for (const run of lines.flat()) {
+      const set = used.get(run.font) ?? new Set<number>();
+      run.gids.forEach((g) => set.add(g));
+      used.set(run.font, set);
+    }
+    const names = new Map<mupdf.Font, string>();
+    for (const [f, gids] of used) names.set(f, this.embedFont(doc, fonts, f, gids));
+    const ops = [`${style.color.map(fmt).join(" ")} rg BT`];
+    lines.forEach((runs, i) => {
+      ops.push(`1 0 0 1 ${fmt(pad)} ${fmt(height - pad - size * 0.9 - i * lineHeight)} Tm`);
+      for (const run of runs) ops.push(`/${names.get(run.font)} ${fmt(size)} Tf <${run.gids.map((g) => g.toString(16).padStart(4, "0")).join("")}> Tj`);
+    });
+    ops.push("ET");
+    annot.setAppearance(null, null, mupdf.Matrix.identity, [0, 0, width, height], { Font: fonts }, ops.join("\n"));
+    const obj = annot.getObject();
+    obj.put(FONT_KEY, doc.newString(style.family ?? ""));
+    obj.put(FONT_STYLE_KEY, doc.newString(`${style.bold ? "bold" : ""} ${style.italic ? "italic" : ""}`.trim()));
+    obj.put(CUSTOM_AP_KEY, true);
   }
 
   addInk(id: number, pageIndex: number, strokes: Point[][], color: RGB, width: number): number {
@@ -411,7 +464,8 @@ export class PdfEngine {
   moveAnnotation(id: number, pageIndex: number, annotId: number, dx: number, dy: number): void {
     if (dx === 0 && dy === 0) return;
     this.op(id, "移動註解", () => {
-      const annot = this.findAnnot(this.page(id, pageIndex), annotId);
+      const page = this.page(id, pageIndex);
+      const annot = this.findAnnot(page, annotId);
       const shift = ([x, y]: Point): Point => [x + dx, y + dy];
       if (annot.hasInkList()) {
         annot.setInkList(annot.getInkList().map((stroke) => stroke.map(shift)));
@@ -422,6 +476,15 @@ export class PdfEngine {
         annot.setQuadPoints(annot.getQuadPoints().map((q) => q.map((v, i) => v + (i % 2 === 0 ? dx : dy)) as Quad));
       } else if (annot.hasVertices()) {
         annot.setVertices(annot.getVertices().map(shift));
+      } else if (annot.getObject().get(CUSTOM_AP_KEY).isBoolean() && annot.getObject().get(CUSTOM_AP_KEY).asBoolean()) {
+        // 自訂外觀：直接平移 PDF 座標中的外框，保留原本的外觀串流
+        const [a, b, c, d] = invert(page.getTransform() as Matrix);
+        const ux = dx * a + dy * c;
+        const uy = dx * b + dy * d;
+        const rect = annot.getObject().get("Rect");
+        const values = [0, 1, 2, 3].map((i) => rect.get(i).asNumber());
+        annot.getObject().put("Rect", [values[0] + ux, values[1] + uy, values[2] + ux, values[3] + uy]);
+        return;
       } else {
         const [x0, y0, x1, y1] = annot.getRect();
         annot.setRect([x0 + dx, y0 + dy, x1 + dx, y1 + dy]);
@@ -763,6 +826,12 @@ export class PdfEngine {
 
   /** 頁面上的水平文字行，含字型、字級、顏色與基線位置。 */
   textLines(id: number, pageIndex: number): TextLine[] {
+    return this.analyzeLines(id, pageIndex).map(({ dict: _dict, ...line }) => line);
+  }
+
+  /** 分析頁面文字行，並找出每一行使用的 PDF 字型字典。 */
+  private analyzeLines(id: number, pageIndex: number): AnalyzedLine[] {
+    const entry = this.entry(id);
     const page = this.page(id, pageIndex);
     const toUser = invert(page.getTransform() as Matrix);
     const raw: Array<{ bbox: Rect; horizontal: boolean; chars: Array<{ c: string; origin: Point; font: mupdf.Font; size: number; color: number[] }> }> = [];
@@ -774,20 +843,40 @@ export class PdfEngine {
         raw[raw.length - 1]?.chars.push({ c, origin: origin as Point, font, size, color: color as number[] });
       },
     });
-    const embeddedCache = new Map<string, boolean>();
-    const lines: TextLine[] = [];
+    const { invisible } = scanPage(page, false);
+    const fonts = pageFonts(page);
+    const fontCache = new Map<string, mupdf.PDFObject | null>();
+    let rendered: mupdf.Pixmap | null = null;
+    const lines: AnalyzedLine[] = [];
     for (const line of raw) {
       const text = line.chars.map((ch) => ch.c).join("");
       if (!line.horizontal || !text.trim()) continue;
-      const first = line.chars.find((ch) => ch.c.trim()) ?? line.chars[0];
-      const name = first.font.getName();
+      const visibleChars = line.chars.filter((ch) => ch.c.trim());
+      const first = visibleChars[0] ?? line.chars[0];
+      const hidden = visibleChars.filter((ch) => invisible.has(pointKey(ch.origin))).length;
+      const ocr = hidden > 0 && hidden >= visibleChars.length / 2;
+      const internalName = first.font.getName();
+      const cacheKey = `${internalName}\u0000${text}`;
+      if (!fontCache.has(cacheKey)) fontCache.set(cacheKey, this.matchFontDict(entry, fonts, internalName, text));
+      const dict = fontCache.get(cacheKey) ?? null;
+      const base = dict?.resolve().get("BaseFont");
+      const name = base?.isName() ? base.asName() : internalName;
       const bold = first.font.isBold() || /bold|black|heavy|semibold|demi|w[6-9]/i.test(name);
       const italic = first.font.isItalic() || /italic|oblique/i.test(name);
-      const mono = first.font.isMono() || /courier|mono|consol/i.test(name);
-      const serif = !mono && (first.font.isSerif() || /times|serif|roman|georgia|garamond|song|ming|明|宋|kai|楷/i.test(name)) && !/sans/i.test(name);
+      // 未內嵌的字型在 MuPDF 中會以替代字型顯示，其襯線／等寬屬性不可靠，改看字型描述的旗標與名稱
+      const flags = dict ? descriptorFlags(dict) : null;
+      const embedded = dict !== null && fontFileOf(dict.resolve()) !== null;
+      const nameMono = /courier|mono|consol/i.test(name);
+      const nameSerif = /times|serif|roman|georgia|garamond|song|ming|明|宋|kai|楷|mincho/i.test(name) && !/sans/i.test(name);
+      const mono = nameMono || (flags !== null ? (flags & 1) !== 0 : embedded && first.font.isMono());
+      const serif = !mono && (nameSerif || (!/sans|gothic|hei|黑/i.test(name) && (flags !== null ? (flags & 2) !== 0 : embedded && first.font.isSerif())));
       const origin = line.chars[0].origin;
-      const fontName = cleanFontName(name);
-      if (!embeddedCache.has(fontName)) embeddedCache.set(fontName, this.embeddedFontFile(page, fontName) !== null);
+      let color = toRgb(first.color);
+      if (ocr) {
+        // 隱形文字沒有顏色：改從頁面畫面取樣掃描影像中的文字顏色
+        rendered ??= page.toPixmap(mupdf.Matrix.scale(SAMPLE_SCALE, SAMPLE_SCALE), mupdf.ColorSpace.DeviceRGB, false, false);
+        color = sampleColors(rendered, line.bbox, SAMPLE_SCALE).text;
+      }
       lines.push({
         index: lines.length,
         text: text.replace(/\s+$/, ""),
@@ -795,21 +884,73 @@ export class PdfEngine {
         origin,
         userBBox: transformRect(line.bbox, toUser),
         userOrigin: transformPoint(origin, toUser),
-        fontName,
+        fontName: ocr ? "" : cleanFontName(name),
         size: Math.round(first.size * 100) / 100,
-        bold,
-        italic,
-        serif,
-        mono,
-        color: toRgb(first.color),
-        embeddedFont: embeddedCache.get(fontName) ?? false,
+        bold: ocr ? false : bold,
+        italic: ocr ? false : italic,
+        serif: ocr ? false : serif,
+        mono: ocr ? false : mono,
+        color,
+        embeddedFont: !ocr && embedded,
         textReliable: isReliableText(text),
+        ocr,
+        dict: ocr ? null : dict,
       });
     }
     // 依版面位置排序（由上而下、由左而右），不受內容串流順序影響
     lines.sort((a, b) => (Math.abs(a.origin[1] - b.origin[1]) > 2 ? a.origin[1] - b.origin[1] : a.origin[0] - b.origin[0]));
     lines.forEach((line, i) => (line.index = i));
+    rendered?.destroy();
     return lines;
+  }
+
+  /**
+   * 找出文字使用的字型字典。未內嵌的字型以 BaseFont 比對；內嵌字型在 MuPDF 中會回報字型檔內部的名稱，
+   * 因此改把每個字型字典單獨載入一次，比對載入後的名稱。同名時優先挑對照表涵蓋這行文字的字型。
+   */
+  private matchFontDict(entry: DocEntry, fonts: mupdf.PDFObject[], internalName: string, text: string): mupdf.PDFObject | null {
+    const target = cleanFontName(internalName).toLowerCase();
+    const matches = fonts.filter((ref) => {
+      const base = ref.resolve().get("BaseFont");
+      if (base.isName() && cleanFontName(base.asName()).toLowerCase() === target) return true;
+      return this.loadedFontName(entry, ref) === internalName;
+    });
+    if (matches.length <= 1) return matches[0] ?? null;
+    const chars = [...text].filter((c) => c.trim());
+    return (
+      matches.find((ref) => {
+        const encoder = originalFontEncoder(ref.resolve());
+        return encoder !== null && chars.every((c) => encoder.has(c));
+      }) ?? matches[0]
+    );
+  }
+
+  /** MuPDF 載入某個字型字典後回報的字型名稱（快取）。 */
+  private loadedFontName(entry: DocEntry, ref: mupdf.PDFObject): string | null {
+    const key = ref.isIndirect() ? ref.asIndirect() : -1;
+    if (key > 0 && entry.fontNames.has(key)) return entry.fontNames.get(key) ?? null;
+    let name: string | null = null;
+    try {
+      const dict = ref.resolve();
+      const subtype = dict.get("Subtype").isName() ? dict.get("Subtype").asName() : "";
+      if (subtype !== "Type3") {
+        const temp = new mupdf.PDFDocument();
+        const copy = temp.graftObject(ref);
+        temp.insertPage(0, temp.addPage([0, 0, 100, 100], 0, { Font: { F: copy } }, `BT /F 12 Tf 10 10 Td <${subtype === "Type0" ? "0001" : "41"}> Tj ET`));
+        const page = temp.loadPage(0);
+        page.toStructuredText("").walk({
+          onChar(_c, _o, font) {
+            name ??= font.getName();
+          },
+        });
+        page.destroy();
+        temp.destroy();
+      }
+    } catch {
+      name = null;
+    }
+    if (key > 0) entry.fontNames.set(key, name);
+    return name;
   }
 
   /** 找出包含頁面座標（y 向下）某點的文字行。 */
@@ -829,99 +970,150 @@ export class PdfEngine {
   fontRequest(id: number, pageIndex: number, lineIndex: number): FontRequest {
     const line = this.textLines(id, pageIndex)[lineIndex];
     if (!line) throw new Error("找不到要編輯的文字行");
-    return fontRequestFor(line.fontName, line.bold, line.italic);
-  }
-
-  /** 從頁面資源中找出同名字型的內嵌字型檔。 */
-  private embeddedFontFile(page: mupdf.PDFPage, fontName: string): Uint8Array | null {
-    const dict = this.findFontDict(page, fontName);
-    return dict ? fontFileOf(dict) : null;
-  }
-
-  /** 從頁面（含表單 XObject）資源中找出同名的字型字典。 */
-  private findFontDict(page: mupdf.PDFPage, fontName: string): mupdf.PDFObject | null {
-    const target = cleanFontName(fontName).toLowerCase();
-    let found: mupdf.PDFObject | null = null;
-    const visit = (resources: mupdf.PDFObject, depth: number) => {
-      if (found || !resources.isDictionary()) return;
-      const fonts = resources.get("Font");
-      if (fonts.isDictionary()) {
-        fonts.forEach((value) => {
-          const dict = value.resolve();
-          if (!dict.isDictionary()) return;
-          const base = dict.get("BaseFont");
-          if (!found && base.isName() && cleanFontName(base.asName()).toLowerCase() === target) found = value;
-        });
-      }
-      const xobjects = resources.get("XObject");
-      if (depth < 2 && xobjects.isDictionary()) {
-        xobjects.forEach((value) => {
-          const form = value.resolve();
-          const resources = form.isDictionary() ? form.get("Resources") : null;
-          if (resources && !resources.isNull() && form.get("Subtype").isName() && form.get("Subtype").asName() === "Form") visit(resources.resolve(), depth + 1);
-        });
-      }
-    };
-    const pageResources = page.getObject().getInheritable("Resources");
-    if (!pageResources.isNull()) visit(pageResources.resolve(), 0);
-    return found as mupdf.PDFObject | null;
+    if (line.ocr) return ocrFontRequest(line.text);
+    return fontRequestFor(line.fontName, line.bold, line.italic, { serif: line.serif, mono: line.mono, text: line.text });
   }
 
   /**
    * 直接修改一行文字：真正移除原本的字形（背景、圖片與線條保留），再寫入新文字。
-   * 字型優先順序：原檔內嵌字型（包含所有需要的字形時）→ `font`（電腦上的或下載的字型）→ 標準字型。
+   * 字型優先順序：原檔內嵌字型（包含所有需要的字形時）→ `font`（電腦上的或下載的字型）→ `fallbackFont`（缺字時）→ 標準字型。
+   * `forceFont` 為 true 時（使用者自選字型）不沿用原檔字型。
+   * OCR 辨識出的文字：字形在掃描影像中，會把影像中那一行的像素改成周圍的背景色，再寫入看得見的新文字。
    * `newText` 為空字串時等於刪除這一行。
    */
-  replaceTextLine(
-    id: number,
-    pageIndex: number,
-    lineIndex: number,
-    newText: string,
-    override: Partial<Pick<TextLine, "size" | "color" | "bold" | "italic" | "serif" | "mono">> = {},
-    font: { data: Uint8Array; index?: number } | null = null,
-  ): ReplaceResult {
-    const line = this.textLines(id, pageIndex)[lineIndex];
+  replaceTextLine(id: number, pageIndex: number, lineIndex: number, newText: string, options: ReplaceOptions = {}): ReplaceResult {
+    const line = this.analyzeLines(id, pageIndex)[lineIndex];
     if (!line) throw new Error("找不到要編輯的文字行");
-    const style = { ...line, ...override };
+    const style = { ...line, ...options.override };
+    const font = options.font ?? null;
     const text = newText.replace(/\s+$/, "");
     return this.op(id, "編輯文字", (doc) => {
       const page = this.load(doc, pageIndex);
       let fontUsed: ReplaceResult["font"] = "standard";
       const [x0, y0, x1, y1] = line.bbox;
-      const inset = (y1 - y0) * 0.2;
-      const originalDict = this.findFontDict(page, line.fontName);
+      const originalDict = options.forceFont ? null : line.dict?.resolve() ?? null;
       // 1. 直接沿用原字型資源（字形、字寬與原文完全相同）
-      const encoder = originalDict ? originalFontEncoder(originalDict) : null;
+      const sameStyle = !options.override || ["bold", "italic", "serif", "mono"].every((k) => options.override?.[k as keyof StyleFlags] === undefined || options.override[k as keyof StyleFlags] === line[k as keyof StyleFlags]);
+      const encoder = originalDict && sameStyle ? originalFontEncoder(originalDict) : null;
       const codes = encoder ? encodeWith(encoder, text) : null;
       // 2. 原字型檔（含字元對照）重新嵌入；3. 提供的字型；4. 標準字型
       const primary: mupdf.Font[] = [];
       if (!codes) {
-        const embeddedData = originalDict ? fontFileOf(originalDict) : null;
+        const embeddedData = originalDict && sameStyle ? fontFileOf(originalDict) : null;
         const embedded = embeddedData ? loadFont(line.fontName, embeddedData) : null;
         if (embedded && coversText(embedded, text)) {
           primary.push(embedded);
           fontUsed = "embedded";
         } else if (font) {
-          const supplied = loadFont(line.fontName, font.data, font.index ?? 0);
+          const supplied = loadFont(line.fontName || "Font", font.data, font.index ?? 0);
           if (supplied) {
             primary.push(supplied);
             fontUsed = coversText(supplied, text) ? "supplied" : "mixed";
           }
         }
+        if (fontUsed !== "embedded" && fontUsed !== "supplied" && options.fallbackFont) {
+          const fallback = loadFont("Fallback", options.fallbackFont.data, options.fallbackFont.index ?? 0);
+          if (fallback) {
+            primary.push(fallback);
+            if (fontUsed === "standard") fontUsed = "mixed";
+          }
+        }
       }
 
-      const redact = page.createAnnotation("Redact");
-      redact.setRect([x0, y0 + inset, x1, y1 - inset]);
-      redact.update();
-      redact.applyRedaction(0, mupdf.PDFPage.REDACT_IMAGE_NONE, mupdf.PDFPage.REDACT_LINE_ART_NONE, mupdf.PDFPage.REDACT_TEXT_REMOVE);
-      if (text && codes && originalDict) {
-        this.appendEncodedText(doc, page, textMatrix(line.origin, style.size), style.color, originalDict, codes, "edit");
+      if (line.ocr) {
+        // 隱形的 OCR 文字整行移除；看得見的字形在掃描影像中，改掉影像中那一行的像素
+        const redact = page.createAnnotation("Redact");
+        redact.setRect(inflate(line.bbox, 1));
+        redact.update();
+        redact.applyRedaction(0, mupdf.PDFPage.REDACT_IMAGE_NONE, mupdf.PDFPage.REDACT_LINE_ART_NONE, mupdf.PDFPage.REDACT_TEXT_REMOVE);
+        const pad = (y1 - y0) * 0.12;
+        const area: Rect = [x0 - pad, y0 - pad, x1 + pad, y1 + pad];
+        if (!this.eraseInImages(doc, page, area)) this.paintBackground(doc, page, area);
+      } else {
+        const inset = (y1 - y0) * 0.2;
+        const redact = page.createAnnotation("Redact");
+        redact.setRect([x0, y0 + inset, x1, y1 - inset]);
+        redact.update();
+        redact.applyRedaction(0, mupdf.PDFPage.REDACT_IMAGE_NONE, mupdf.PDFPage.REDACT_LINE_ART_NONE, mupdf.PDFPage.REDACT_TEXT_REMOVE);
+      }
+      if (text && codes && originalDict && line.dict) {
+        this.appendEncodedText(doc, page, textMatrix(line.origin, style.size), style.color, line.dict, codes, "edit");
         fontUsed = "embedded";
       } else if (text) {
         this.appendText(doc, page, [{ text, matrix: textMatrix(line.origin, style.size) }], style.color, 1, false, "edit", this.fontChain(style, primary));
       }
       return { font: fontUsed };
     });
+  }
+
+  /**
+   * 把頁面上掃描影像中某個區域（頁面座標）的像素改成周圍的背景色。
+   * 會建立新的影像物件並只替換本頁的資源，其他共用同一張影像的頁面不受影響。
+   */
+  private eraseInImages(doc: mupdf.PDFDocument, page: mupdf.PDFPage, area: Rect): boolean {
+    const { images } = scanPage(page, true);
+    const pageObj = page.getObject();
+    let changed = false;
+    for (const placed of images) {
+      const bounds = transformRect([0, 0, 1, 1], placed.ctm);
+      if (!rectsIntersect(bounds, area)) continue;
+      const w = placed.image.getWidth();
+      const h = placed.image.getHeight();
+      const resources = resolved(pageObj.getInheritable("Resources"));
+      const xobjects = resources.isDictionary() ? resolved(resources.get("XObject")) : null;
+      if (!xobjects?.isDictionary()) continue;
+      let name: string | null = null;
+      xobjects.forEach((value, key) => {
+        const subtype = value.get("Subtype");
+        if (name === null && value.isStream() && subtype.isName() && subtype.asName() === "Image" && value.get("Width").asNumber() === w && value.get("Height").asNumber() === h) name = String(key);
+      });
+      if (name === null) continue;
+      let pixmap = placed.image.toPixmap();
+      const cs = pixmap.getColorSpace();
+      if (!cs || !(cs.isRGB() || cs.isGray()) || pixmap.getAlpha()) {
+        const converted = pixmap.convertToColorSpace(mupdf.ColorSpace.DeviceRGB, false);
+        pixmap.destroy();
+        pixmap = converted;
+      }
+      // 頁面座標 → 影像像素（影像空間為單位正方形，像素第 0 列在上方）
+      const inv = invert(placed.ctm);
+      const [u0, v0, u1, v1] = transformRect(area, inv);
+      const px = [Math.floor(Math.max(0, u0) * w), Math.floor(Math.max(0, v0) * h), Math.ceil(Math.min(1, u1) * w), Math.ceil(Math.min(1, v1) * h)] as Rect;
+      if (px[2] <= px[0] || px[3] <= px[1]) {
+        pixmap.destroy();
+        continue;
+      }
+      fillWithBackground(pixmap, px);
+      const ref = doc.addImage(new mupdf.Image(pixmap));
+      pixmap.destroy();
+      const oldImage = xobjects.get(name);
+      for (const key of ["SMask", "Mask", "Interpolate"]) {
+        const value = oldImage.get(key);
+        if (!value.isNull()) ref.put(key, value);
+      }
+      // 本頁使用自己的資源複本
+      const ownResources = doc.addObject(cloneDict(doc, resources));
+      const ownXObjects = cloneDict(doc, xobjects);
+      ownXObjects.put(name, ref);
+      ownResources.put("XObject", ownXObjects);
+      pageObj.put("Resources", ownResources);
+      changed = true;
+    }
+    return changed;
+  }
+
+  /** 找不到掃描影像時：以周圍的背景色蓋住該區域（例如 OCR 文字位於向量圖形上）。 */
+  private paintBackground(doc: mupdf.PDFDocument, page: mupdf.PDFPage, area: Rect) {
+    const rendered = page.toPixmap(mupdf.Matrix.scale(SAMPLE_SCALE, SAMPLE_SCALE), mupdf.ColorSpace.DeviceRGB, false, false);
+    const { background } = sampleColors(rendered, area, SAMPLE_SCALE);
+    rendered.destroy();
+    const pageObj = page.getObject();
+    const [x0, y0, x1, y1] = transformRect(area, invert(page.getTransform() as Matrix));
+    wrapContents(doc, pageObj);
+    const stream = doc.addStream(`q ${background.map(fmt).join(" ")} rg ${fmt(x0)} ${fmt(y0)} ${fmt(x1 - x0)} ${fmt(y1 - y0)} re f Q`, { [STAMP_KEY]: doc.newName("edit") });
+    const contents = pageObj.get("Contents");
+    if (contents.isArray()) contents.push(stream);
+    else pageObj.put("Contents", [contents, stream]);
   }
 
   // MARK: - 遮蓋、平面化
@@ -1055,6 +1247,181 @@ interface GlyphRun {
   width: number;
 }
 
+export interface ReplaceOptions {
+  /** 改變字級、顏色或樣式 */
+  override?: Partial<Pick<TextLine, "size" | "color" | "bold" | "italic" | "serif" | "mono">>;
+  /** 電腦上的或下載的字型檔 */
+  font?: FontData | null;
+  /** 主要字型缺字時使用的字型（例如英文字型遇到中文） */
+  fallbackFont?: FontData | null;
+  /** 使用者自選字型：不沿用原檔字型 */
+  forceFont?: boolean;
+}
+
+export interface FontData {
+  data: Uint8Array;
+  /** 字型集合（.ttc）中的第幾個字型 */
+  index?: number;
+}
+
+type AnalyzedLine = TextLine & { dict: mupdf.PDFObject | null };
+
+/** 取樣顏色時的渲染倍率。 */
+const SAMPLE_SCALE = 2;
+
+/** 解析間接參照；null 物件直接回傳（MuPDF 的 null 物件無法 resolve）。 */
+function resolved(obj: mupdf.PDFObject): mupdf.PDFObject {
+  return obj.isNull() ? obj : obj.resolve();
+}
+
+function pointKey([x, y]: Point): string {
+  return `${Math.round(x * 10)},${Math.round(y * 10)}`;
+}
+
+/** 掃描頁面內容：隱形文字（render mode 3，例如 OCR 文字層）的字形位置，以及頁面上的影像。 */
+function scanPage(page: mupdf.PDFPage, wantImages: boolean): { invisible: Set<string>; images: Array<{ image: mupdf.Image; ctm: Matrix }> } {
+  const invisible = new Set<string>();
+  const images: Array<{ image: mupdf.Image; ctm: Matrix }> = [];
+  const device = new mupdf.Device({
+    ignoreText(text, ctm) {
+      text.walk({
+        showGlyph(_font, trm) {
+          invisible.add(pointKey(transformPoint([trm[4], trm[5]], ctm as Matrix)));
+        },
+      });
+    },
+    fillImage(image, ctm) {
+      if (wantImages) images.push({ image, ctm: ctm as Matrix });
+    },
+  });
+  try {
+    page.runPageContents(device, mupdf.Matrix.identity);
+  } finally {
+    device.close();
+  }
+  return { invisible, images };
+}
+
+/** 頁面（含表單 XObject）資源中的所有字型字典。 */
+function pageFonts(page: mupdf.PDFPage): mupdf.PDFObject[] {
+  const found: mupdf.PDFObject[] = [];
+  const seen = new Set<number>();
+  const visit = (resources: mupdf.PDFObject, depth: number) => {
+    if (!resources.isDictionary()) return;
+    const fonts = resolved(resources.get("Font"));
+    if (fonts.isDictionary()) {
+      fonts.forEach((value) => {
+        const key = value.isIndirect() ? value.asIndirect() : -1;
+        if (key > 0 && seen.has(key)) return;
+        if (key > 0) seen.add(key);
+        if (value.resolve().isDictionary()) found.push(value);
+      });
+    }
+    const xobjects = resolved(resources.get("XObject"));
+    if (depth < 3 && xobjects.isDictionary()) {
+      // 注意：不可對串流物件呼叫 resolve()（MuPDF.js 會讓之後存檔的串流損壞）；get() 會自動解析間接參照
+      xobjects.forEach((value) => {
+        const subtype = value.get("Subtype");
+        if (!subtype.isName() || subtype.asName() !== "Form") return;
+        const inner = value.get("Resources");
+        if (!inner.isNull()) visit(inner.resolve(), depth + 1);
+      });
+    }
+  };
+  const resources = page.getObject().getInheritable("Resources");
+  if (!resources.isNull()) visit(resources.resolve(), 0);
+  return found;
+}
+
+function channelMedian(values: number[]): number {
+  if (!values.length) return 255;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
+
+/** 取樣像素區域 `px` 外圍一圈的背景色（各色版的中位數）。 */
+function ringColor(pixels: Uint8ClampedArray, width: number, height: number, stride: number, n: number, [x0, y0, x1, y1]: Rect, ring: number): number[] {
+  const channels: number[][] = Array.from({ length: n }, () => []);
+  const add = (x: number, y: number) => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    const i = y * stride + x * n;
+    for (let c = 0; c < n; c++) channels[c].push(pixels[i + c]);
+  };
+  const step = Math.max(1, Math.floor((x1 - x0 + y1 - y0) / 400));
+  for (let r = 1; r <= ring; r++) {
+    for (let x = x0 - r; x < x1 + r; x += step) {
+      add(x, y0 - r);
+      add(x, y1 - 1 + r);
+    }
+    for (let y = y0 - r; y < y1 + r; y += step) {
+      add(x0 - r, y);
+      add(x1 - 1 + r, y);
+    }
+  }
+  return channels.map(channelMedian);
+}
+
+/** 由渲染後的頁面取樣某區域（頁面座標）的背景色與文字顏色（0–1 RGB）。 */
+function sampleColors(pixmap: mupdf.Pixmap, area: Rect, scale: number): { background: RGB; text: RGB } {
+  const width = pixmap.getWidth();
+  const height = pixmap.getHeight();
+  const stride = pixmap.getStride();
+  const n = pixmap.getNumberOfComponents();
+  const pixels = pixmap.getPixels();
+  const px = area.map((v, i) => (i < 2 ? Math.floor(v * scale) : Math.ceil(v * scale))) as Rect;
+  const x0 = Math.max(0, px[0]);
+  const y0 = Math.max(0, px[1]);
+  const x1 = Math.min(width, px[2]);
+  const y1 = Math.min(height, px[3]);
+  const bg = ringColor(pixels, width, height, stride, n, [x0, y0, x1, y1], 3).slice(0, 3);
+  // 與背景差異最大的像素即為文字筆畫
+  const ink: Array<[number, number, number, number]> = [];
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const i = y * stride + x * n;
+      const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+      const d = Math.abs(r - bg[0]) + Math.abs(g - bg[1]) + Math.abs(b - bg[2]);
+      if (d > 90) ink.push([d, r, g, b]);
+    }
+  }
+  const background = bg.map((v) => v / 255) as RGB;
+  if (ink.length < 4) return { background, text: [0, 0, 0] };
+  ink.sort((a, b) => b[0] - a[0]);
+  const top = ink.slice(0, Math.max(4, Math.floor(ink.length * 0.3)));
+  const text = [1, 2, 3].map((c) => top.reduce((sum, p) => sum + p[c], 0) / top.length / 255) as RGB;
+  // 接近黑色的掃描文字直接當作黑色
+  return { background, text: text.every((v) => v < 0.25) ? [0, 0, 0] : text.map((v) => Math.round(v * 100) / 100) as RGB };
+}
+
+/** 把像素區域填成外圍的背景色（每一列依左右兩側的顏色漸變，讓紙張色澤較自然）。 */
+function fillWithBackground(pixmap: mupdf.Pixmap, [x0, y0, x1, y1]: Rect) {
+  const width = pixmap.getWidth();
+  const height = pixmap.getHeight();
+  const stride = pixmap.getStride();
+  const n = pixmap.getNumberOfComponents();
+  const pixels = pixmap.getPixels();
+  const ring = Math.max(2, Math.round((y1 - y0) * 0.15));
+  const whole = ringColor(pixels, width, height, stride, n, [x0, y0, x1, y1], ring);
+  const band = Math.max(1, Math.floor((y1 - y0) / 4));
+  const side = (x: number, y: number) => ringColor(pixels, width, height, stride, n, [x, Math.max(0, y - band), x + 1, Math.min(height, y + band + 1)], ring);
+  const rows: Array<[number[], number[]]> = [];
+  for (let y = y0; y < y1; y++) {
+    const left = x0 > 0 ? side(x0 - 1 - ring, y) : whole;
+    const right = x1 < width ? side(x1 + ring, y) : whole;
+    // 左右差太多（例如旁邊是圖案）時改用整圈的中位數
+    const far = (c: number[]) => c.some((v, i) => Math.abs(v - whole[i]) > 40);
+    rows.push([far(left) ? whole : left, far(right) ? whole : right]);
+  }
+  for (let y = y0; y < y1; y++) {
+    const [left, right] = rows[y - y0];
+    for (let x = x0; x < x1; x++) {
+      const t = x1 - x0 > 1 ? (x - x0) / (x1 - x0 - 1) : 0;
+      const i = y * stride + x * n;
+      for (let c = 0; c < n; c++) pixels[i + c] = Math.round(left[c] * (1 - t) + right[c] * t);
+    }
+  }
+}
+
 export interface ReplaceResult {
   /** embedded：沿用原檔字型；supplied：使用提供的字型；mixed：提供的字型缺字，部分字元用標準字型；standard：標準字型 */
   font: "embedded" | "supplied" | "mixed" | "standard";
@@ -1067,6 +1434,18 @@ function loadFont(name: string, data: Uint8Array, index = 0): mupdf.Font | null 
   } catch {
     return null;
   }
+}
+
+/** 字型描述（FontDescriptor）的 Flags：1 等寬、2 襯線；沒有時回傳 null。 */
+function descriptorFlags(ref: mupdf.PDFObject): number | null {
+  const dict = ref.resolve();
+  let descriptor = dict.get("FontDescriptor");
+  if (descriptor.isNull()) {
+    const descendants = dict.get("DescendantFonts");
+    if (descendants.isArray() && descendants.length > 0) descriptor = descendants.get(0).get("FontDescriptor");
+  }
+  const flags = descriptor.isDictionary() ? descriptor.get("Flags") : null;
+  return flags?.isNumber() ? flags.asNumber() : null;
 }
 
 /** 字型字典的內嵌字型檔。 */
@@ -1331,6 +1710,23 @@ function annotInfo(annot: mupdf.PDFAnnotation, page: number): AnnotInfo {
     color: safe(() => annot.getColor() as number[], []),
     role: role.isName() ? role.asName() : role.isString() ? role.asString() : "",
     lineEnd: annot.hasLineEndingStyles() ? annot.getLineEndingStyles().end : undefined,
+    textStyle: type === "FreeText" ? freeTextStyle(annot) : undefined,
+  };
+}
+
+function freeTextStyle(annot: mupdf.PDFAnnotation): TextBoxStyle {
+  const obj = annot.getObject();
+  const da = safe(() => annot.getDefaultAppearance(), { font: "Helv", size: 12, color: [0, 0, 0] as number[] });
+  const family = obj.get(FONT_KEY);
+  const flags = obj.get(FONT_STYLE_KEY);
+  const styleText = flags.isString() ? flags.asString() : "";
+  const color = (da.color?.length === 3 ? da.color : da.color?.length === 1 ? [da.color[0], da.color[0], da.color[0]] : [0, 0, 0]) as RGB;
+  return {
+    fontSize: da.size || 12,
+    color,
+    family: family.isString() && family.asString() ? family.asString() : undefined,
+    bold: /bold/.test(styleText),
+    italic: /italic/.test(styleText),
   };
 }
 

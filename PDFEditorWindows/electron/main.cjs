@@ -248,6 +248,7 @@ function registerIpc() {
 
   ipcMain.handle("print", (_e, pages) => printPages(pages));
   ipcMain.handle("fonts:resolve", (_e, request) => fonts.resolveFont(request));
+  ipcMain.handle("fonts:list", () => fonts.listFamilies());
 }
 
 /** 以隱藏視窗載入每頁的圖片後呼叫系統列印對話框。 */

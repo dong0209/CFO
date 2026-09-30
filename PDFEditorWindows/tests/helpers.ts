@@ -53,3 +53,47 @@ export function makeEmbeddedFontPdf(text: string): Uint8Array {
   doc.subsetFonts();
   return doc.saveToBuffer("garbage=compact,compress").asUint8Array().slice();
 }
+
+/**
+ * 模擬掃描檔：米色紙張上的深藍色文字「Scanned Invoice」整頁轉成影像（沒有文字層）。
+ * 文字基線在頁面座標 y=142（PDF 座標 y=700），字級 36。
+ */
+export function makeScannedPdf(): Uint8Array {
+  const source = new mupdf.PDFDocument();
+  const font = source.addSimpleFont(new mupdf.Font("Helvetica"));
+  source.insertPage(0, source.addPage([0, 0, 595, 842], 0, { Font: { F1: font } }, "0.95 0.93 0.85 rg 0 0 595 842 re f 0.1 0.1 0.45 rg BT /F1 36 Tf 72 700 Td (Scanned Invoice) Tj ET 0 g BT /F1 14 Tf 72 600 Td (Keep this line) Tj ET"));
+  const pixmap = source.loadPage(0).toPixmap(mupdf.Matrix.scale(2, 2), mupdf.ColorSpace.DeviceRGB, false);
+  const doc = new mupdf.PDFDocument();
+  const image = doc.addImage(new mupdf.Image(pixmap));
+  doc.insertPage(0, doc.addPage([0, 0, 595, 842], 0, { XObject: { Im0: image } }, "q 595 0 0 842 0 0 cm /Im0 Do Q"));
+  return doc.saveToBuffer("compress").asUint8Array().slice();
+}
+
+/** 內嵌字型的 BaseFont 與字型檔內部名稱不同（常見於各種 PDF 產生器）。 */
+export function makeRenamedFontPdf(baseFont: string, text: string): Uint8Array {
+  const doc = new mupdf.PDFDocument();
+  const font = new mupdf.Font("zh-Hant");
+  const ref = doc.addFont(font);
+  ref.resolve().put("BaseFont", doc.newName(baseFont));
+  ref.resolve().get("DescendantFonts").get(0).resolve().put("BaseFont", doc.newName(baseFont));
+  const hex = [...text].map((ch) => font.encodeCharacter(ch).toString(16).padStart(4, "0")).join("");
+  doc.insertPage(0, doc.addPage([0, 0, 595, 842], 0, { Font: { F1: ref } }, `BT /F1 20 Tf 72 700 Td <${hex}> Tj ET`));
+  return doc.saveToBuffer("compress").asUint8Array().slice();
+}
+
+/** 頁面某區域（頁面座標）渲染後的平均顏色（0–255 RGB）。 */
+export function regionColor(data: Uint8Array, rect: [number, number, number, number], annotations = false): number[] {
+  const doc = mupdf.Document.openDocument(data, "application/pdf");
+  const pixmap = doc.loadPage(0).toPixmap(mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, false, annotations);
+  const pixels = pixmap.getPixels();
+  const stride = pixmap.getStride();
+  const sum = [0, 0, 0];
+  let count = 0;
+  for (let y = Math.round(rect[1]); y < Math.round(rect[3]); y++) {
+    for (let x = Math.round(rect[0]); x < Math.round(rect[2]); x++) {
+      for (let c = 0; c < 3; c++) sum[c] += pixels[y * stride + x * 3 + c];
+      count++;
+    }
+  }
+  return sum.map((v) => Math.round(v / count));
+}

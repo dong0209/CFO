@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { inflate, normalizeRect, rectContains } from "../engine/geometry";
+import type { FontRequest } from "../engine/fonts";
 import type { ReplaceResult } from "../engine/pdfEngine";
-import type { AnnotInfo, LinkInfo, MarkupKind, Point, Quad, Rect, ShapeKind, TextLine, WidgetInfo } from "../engine/types";
+import type { AnnotInfo, LinkInfo, MarkupKind, Point, Quad, Rect, ShapeKind, TextBoxStyle, TextLine, WidgetInfo } from "../engine/types";
 import { api, type ResolvedFont } from "../lib/api";
 import { engine } from "../lib/engine";
 import { goToPage, mutate, selectTool } from "../state/actions";
 import { type DocTab, hexToRgb, rgbToHex, setState, toast, updateTab, useStore } from "../state/store";
+import { downloadableFamilies, describeFont, type FontChoice, fontData, AUTO_FONT, previewFamily, resolveChoice, resolveFallback } from "../lib/fonts";
+import { FontControls, type FontSettings } from "./FontControls";
 import { prompt } from "./Modal";
+import { lastTextBoxChoice, textBoxDialog } from "./dialogs/TextBoxDialog";
 import { openSignatures } from "./dialogs/SignatureDialog";
 
 const MOVABLE = new Set(["FreeText", "Text", "Square", "Circle", "Line", "Ink", "Stamp", "Polygon", "PolyLine", "Redact"]);
@@ -76,13 +80,22 @@ export function PageView({ tab, pageIndex, scale }: Props) {
   }, [engineId, pageIndex, revision, scale, info.width, info.height]);
 
   // 編輯文字工具：讀取頁面上的文字行
+  const linesRevision = useRef(-1);
   useEffect(() => {
     if (tool !== "edittext") {
       setEditingLine(null);
       return;
     }
     let cancelled = false;
-    engine.textLines(engineId, pageIndex).then((lines) => !cancelled && setTextLines(lines)).catch(() => {});
+    linesRevision.current = -1;
+    engine
+      .textLines(engineId, pageIndex)
+      .then((lines) => {
+        if (cancelled) return;
+        setTextLines(lines);
+        linesRevision.current = revision;
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -132,7 +145,8 @@ export function PageView({ tab, pageIndex, scale }: Props) {
       case "edittext": {
         // 阻止後續的 mousedown 把焦點從剛出現的編輯框移走
         e.preventDefault();
-        const line = textLines.find((l) => rectContains(inflate(l.bbox, 2), p));
+        // 文字行還在分析中（例如剛切換工具或剛做完 OCR）時直接向引擎查詢
+        const line = linesRevision.current === revision ? textLines.find((l) => rectContains(inflate(l.bbox, 2), p)) : await engine.textLineAt(engineId, pageIndex, p).catch(() => null);
         setEditingLine(line ?? null);
         return;
       }
@@ -172,8 +186,12 @@ export function PageView({ tab, pageIndex, scale }: Props) {
         return;
       }
       case "textbox": {
-        const text = await prompt({ title: "新增文字", message: "輸入要加入頁面的文字：", multiline: true });
-        if (text) await mutate("無法新增文字", () => engine.addFreeText(engineId, pageIndex, p, text, fontSize, rgb));
+        const result = await textBoxDialog({ title: "新增文字", settings: { choice: lastTextBoxChoice(), bold: false, italic: false, size: fontSize, color } });
+        if (result) {
+          await mutate("無法新增文字", () =>
+            engine.addFreeText(engineId, pageIndex, p, result.text, textBoxStyle(result.settings), fontData(result.font), fontData(result.fallback)),
+          );
+        }
         return;
       }
       case "image":
@@ -277,7 +295,23 @@ export function PageView({ tab, pageIndex, scale }: Props) {
     if (tool !== "select") return;
     const hit = topAnnot(toPage(e), (a) => a.type === "FreeText" || a.type === "Text");
     if (!hit) return;
-    const text = await prompt({ title: hit.type === "FreeText" ? "編輯文字" : "編輯備註", initial: hit.contents, multiline: true });
+    if (hit.type === "FreeText") {
+      const style = hit.textStyle;
+      const family = style?.family;
+      const choice: FontChoice = family ? { kind: downloadableFamilies.includes(family) ? "download" : "system", family } : lastTextBoxChoice();
+      const result = await textBoxDialog({
+        title: "編輯文字",
+        text: hit.contents,
+        settings: { choice, bold: style?.bold ?? false, italic: style?.italic ?? false, size: style?.fontSize ?? fontSize, color: rgbToHex(style?.color ?? [0, 0, 0]) },
+      });
+      if (result) {
+        await mutate("無法編輯文字", () =>
+          engine.updateFreeText(engineId, pageIndex, hit.id, result.text, textBoxStyle(result.settings), fontData(result.font), fontData(result.fallback)),
+        );
+      }
+      return;
+    }
+    const text = await prompt({ title: "編輯備註", initial: hit.contents, multiline: true });
     if (text !== null) await mutate("無法編輯文字", () => engine.setContents(engineId, pageIndex, hit.id, text));
   };
 
@@ -337,20 +371,35 @@ export function PageView({ tab, pageIndex, scale }: Props) {
             scale={scale}
             engineId={engineId}
             pageIndex={pageIndex}
-            onDone={async (value, font) => {
+            onDone={async (edit) => {
               setEditingLine(null);
-              if (value === null || value === editingLine.text) return;
+              if (!edit) return;
               let result: ReplaceResult | undefined;
               await mutate("無法修改文字", async () => {
-                result = await engine.replaceTextLine(engineId, pageIndex, editingLine.index, value, {}, font ? { data: font.data, index: font.index } : null);
+                result = await engine.replaceTextLine(engineId, pageIndex, editingLine.index, edit.text, {
+                  override: edit.override,
+                  font: fontData(edit.font),
+                  fallbackFont: fontData(edit.fallback),
+                  forceFont: edit.forceFont,
+                });
               });
-              if (result) toast(replaceMessage(result, font));
+              if (result) toast(replaceMessage(result, edit.font));
             }}
           />
         )}
       </div>
     </div>
   );
+}
+
+function textBoxStyle(settings: FontSettings): TextBoxStyle {
+  return {
+    fontSize: settings.size,
+    color: hexToRgb(settings.color),
+    family: settings.choice.kind === "auto" ? undefined : settings.choice.family,
+    bold: settings.bold,
+    italic: settings.italic,
+  };
 }
 
 function quadPoints(q: Quad, scale: number): string {
@@ -441,115 +490,152 @@ type FontStatus =
   | { state: "resolved"; font: ResolvedFont; family: string }
   | { state: "missing"; family: string };
 
-let fontFaceCounter = 0;
+interface InlineEdit {
+  text: string;
+  override: { size?: number; color?: [number, number, number]; bold?: boolean; italic?: boolean };
+  font: ResolvedFont | null;
+  fallback: ResolvedFont | null;
+  forceFont: boolean;
+}
 
-/** 在原文位置直接輸入新文字；會先辨識原字型、在電腦上尋找或自動下載，並以該字型預覽與寫入。 */
+/**
+ * 在原文位置直接輸入新文字。上方工具列可選字型（預設「自動」：先辨識原字型、在電腦上尋找或自動下載）、
+ * 粗體、斜體、字級與顏色；下方顯示字型辨識結果。
+ */
 function InlineTextEditor({ line, scale, engineId, pageIndex, onDone }: {
   line: TextLine;
   scale: number;
   engineId: number;
   pageIndex: number;
-  onDone: (value: string | null, font: ResolvedFont | null) => void;
+  onDone: (edit: InlineEdit | null) => void;
 }) {
+  const initial: FontSettings = { choice: AUTO_FONT, bold: line.bold, italic: line.italic, size: line.size, color: rgbToHex(line.color) };
   const [value, setValue] = useState(line.text);
+  const [settings, setSettings] = useState<FontSettings>(initial);
+  const [autoName, setAutoName] = useState(line.ocr ? "掃描影像中的文字" : line.fontName || "原字型");
   const [status, setStatus] = useState<FontStatus>({ state: "resolving", family: line.fontName });
   const [cssFamily, setCssFamily] = useState<string | null>(null);
   const finished = useRef(false);
   const committing = useRef(false);
-  const fontPromise = useRef<Promise<ResolvedFont | null>>(Promise.resolve(null));
+  const autoRequest = useRef<Promise<FontRequest | null> | null>(null);
+  const fontPromise = useRef<ReturnType<typeof resolveChoice>>(Promise.resolve({ font: null, request: null }));
   const ref = useRef<HTMLInputElement>(null);
+  const container = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     ref.current?.focus();
     ref.current?.select();
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
+    autoRequest.current ??= engine.fontRequest(engineId, pageIndex, line.index).catch(() => null);
     const promise = (async () => {
-      const request = await engine.fontRequest(engineId, pageIndex, line.index);
-      if (!cancelled) setStatus({ state: "resolving", family: request.originalName });
-      const font = await api().resolveFont(request).catch(() => null);
-      if (cancelled) return font;
-      if (!font) {
-        setStatus({ state: "missing", family: request.originalName });
-        return null;
+      const request = settings.choice.kind === "auto" ? await autoRequest.current : null;
+      const label = settings.choice.kind === "auto" ? request?.originalName ?? line.fontName : settings.choice.family;
+      if (!cancelled) {
+        if (request) setAutoName(request.originalName);
+        setStatus({ state: "resolving", family: label });
       }
-      setStatus({ state: "resolved", font, family: request.originalName });
-      // 讓編輯框以找到的字型顯示（字型集合 .ttc 無法直接載入，改用近似字型預覽）
-      if (font.index === 0) {
-        try {
-          const name = `PEFont${++fontFaceCounter}`;
-          const face = new FontFace(name, font.data.slice().buffer as ArrayBuffer);
-          await face.load();
-          document.fonts.add(face);
-          if (!cancelled) setCssFamily(name);
-        } catch {
-          // 無法預覽時仍可寫入
-        }
+      const resolved = await resolveChoice(settings.choice, settings.bold, settings.italic, request);
+      if (!cancelled) {
+        setStatus(resolved.font ? { state: "resolved", font: resolved.font, family: label } : { state: "missing", family: label });
+        setCssFamily(await previewFamily(resolved.font));
       }
-      return font;
+      return resolved;
     })();
     fontPromise.current = promise;
     return () => {
       cancelled = true;
     };
-  }, [engineId, pageIndex, line.index]);
+  }, [engineId, pageIndex, line.index, line.fontName, settings.choice, settings.bold, settings.italic]);
 
-  const finish = async (result: string | null) => {
+  const finish = async (commit: boolean) => {
     if (finished.current || committing.current) return;
-    if (result === null) {
+    const styleChanged = settings.size !== initial.size || settings.color !== initial.color || settings.bold !== initial.bold || settings.italic !== initial.italic;
+    if (!commit || (value === line.text && !styleChanged && settings.choice.kind === "auto")) {
       finished.current = true;
-      onDone(null, null);
+      onDone(null);
       return;
     }
     committing.current = true;
-    const font = await fontPromise.current.catch(() => null);
+    const { font, request } = await fontPromise.current.catch(() => ({ font: null, request: null }));
+    const fallback = await resolveFallback(request, value);
     finished.current = true;
-    onDone(result, font);
+    const override: InlineEdit["override"] = {};
+    if (settings.size !== initial.size) override.size = settings.size;
+    if (settings.color !== initial.color || line.ocr) override.color = hexToRgb(settings.color);
+    if (settings.bold !== initial.bold) override.bold = settings.bold;
+    if (settings.italic !== initial.italic) override.italic = settings.italic;
+    onDone({ text: value, override, font, fallback, forceFont: settings.choice.kind !== "auto" });
   };
 
   const [x0, y0, x1, y1] = line.bbox;
-  const fontSize = line.size * scale;
+  const fontSize = settings.size * scale;
   const fallbackFamily = line.mono ? '"Courier New", monospace' : line.serif ? '"Times New Roman", "PMingLiU", "MingLiU", serif' : 'Arial, "Microsoft JhengHei", sans-serif';
   const family = cssFamily ? `"${cssFamily}", ${fallbackFamily}` : fallbackFamily;
   const width = Math.max((x1 - x0) * scale, value.length * fontSize * 0.62) + fontSize;
+  const height = Math.max((y1 - y0) * scale, fontSize * 1.2) + 4;
   const statusText =
     status.state === "resolving"
-      ? `正在辨識字型「${status.family}」…`
+      ? `正在尋找字型「${status.family}」…`
       : status.state === "resolved"
-        ? `${status.font.exact ? "字型" : `找不到「${status.family}」，改用相近字型`}：${status.font.name}（${status.font.source === "system" ? "電腦上的字型" : "已自動下載"}）`
+        ? settings.choice.kind === "auto" && !status.font.exact
+          ? `找不到「${status.family}」，改用相近字型：${describeFont(status.font)}`
+          : `字型：${describeFont(status.font)}`
         : `找不到字型「${status.family}」，將使用標準字型`;
   return (
-    <>
+    <div
+      ref={container}
+      className="inline-text-edit"
+      style={{ left: x0 * scale - 3, top: y0 * scale - 2 }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onBlur={(e) => {
+        // 焦點移到工具列（字型選單等）時不要結束編輯
+        if (!container.current?.contains(e.relatedTarget as Node | null)) finish(true);
+      }}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Escape") finish(false);
+      }}
+    >
+      <div className={y0 * scale < 48 ? "inline-text-toolbar below" : "inline-text-toolbar"}>
+        <FontControls value={settings} onChange={setSettings} autoLabel={autoName} compact />
+        <button type="button" className="primary" title="套用 (Enter)" onClick={() => finish(true)}>
+          套用
+        </button>
+        <button type="button" title="取消 (Esc)" onClick={() => finish(false)}>
+          取消
+        </button>
+      </div>
       <input
         ref={ref}
         className="inline-text-editor"
         value={value}
         spellCheck={false}
         style={{
-          left: x0 * scale - 3,
-          top: y0 * scale - 2,
           width,
-          height: (y1 - y0) * scale + 4,
+          height,
           fontSize,
           fontFamily: family,
-          fontWeight: cssFamily ? undefined : line.bold ? 700 : 400,
-          fontStyle: cssFamily ? undefined : line.italic ? "italic" : "normal",
-          color: rgbToHex(line.color),
+          fontWeight: cssFamily ? undefined : settings.bold ? 700 : 400,
+          fontStyle: cssFamily ? undefined : settings.italic ? "italic" : "normal",
+          color: settings.color,
         }}
-        onPointerDown={(e) => e.stopPropagation()}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => {
           e.stopPropagation();
           if (e.nativeEvent.isComposing) return;
-          if (e.key === "Enter") finish(value);
-          else if (e.key === "Escape") finish(null);
+          if (e.key === "Enter") finish(true);
+          else if (e.key === "Escape") finish(false);
         }}
-        onBlur={() => finish(value)}
       />
-      <div className="inline-text-status" style={{ left: x0 * scale - 3, top: y1 * scale + 6 }}>
+      <div className="inline-text-status">
         {!line.textReliable && <div className="warning">⚠ 原文無法正確辨識（PDF 缺少字元對照表），請重新輸入整行文字</div>}
-        {line.embeddedFont && <div>原檔內嵌字型「{line.fontName}」，字形足夠時會直接沿用</div>}
+        {line.ocr && <div>這一行是 OCR 辨識出的掃描文字：套用後會把影像中的原字改成背景色，再寫入新文字</div>}
+        {line.embeddedFont && settings.choice.kind === "auto" && <div>原檔內嵌字型「{line.fontName}」，字形足夠時會直接沿用</div>}
         <div>{statusText}</div>
       </div>
-    </>
+    </div>
   );
 }

@@ -55,6 +55,17 @@ export interface AnnotInfo {
   /** 本程式建立的註解子類別（白底遮蓋、簽名、圖片） */
   role: string;
   lineEnd?: string;
+  /** 文字方塊的字型設定 */
+  textStyle?: TextBoxStyle;
+}
+
+export interface TextBoxStyle {
+  fontSize: number;
+  color: RGB;
+  /** 使用者選的字族（顯示用；字型檔另外提供） */
+  family?: string;
+  bold: boolean;
+  italic: boolean;
 }
 
 export type WidgetKind = "text" | "checkbox" | "radio" | "combobox" | "listbox" | "button" | "signature" | "unknown";
@@ -149,4 +160,6 @@ export interface TextLine {
   embeddedFont: boolean;
   /** 原文是否可正確辨識；false 時通常是 PDF 缺少字元對照表，應重新輸入整行 */
   textReliable: boolean;
+  /** OCR 辨識出的隱形文字（看得見的字形在掃描影像中） */
+  ocr: boolean;
 }

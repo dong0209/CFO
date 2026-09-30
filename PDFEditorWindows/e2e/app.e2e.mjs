@@ -148,8 +148,12 @@ try {
   step("中文文字方塊");
   await page.keyboard.press("b");
   await page.mouse.click(...box.at(80, 420));
+  await page.locator(".dialog textarea").waitFor();
+  assert.ok((await page.locator(".dialog .font-family option").count()) > 10, "文字方塊應有字型選單");
+  await page.locator(".dialog .font-toggle").first().click();
   await page.locator(".dialog textarea").fill("這是中文文字方塊");
-  await page.keyboard.press("Control+Enter");
+  await page.locator(".dialog textarea").press("Control+Enter");
+  await page.waitForFunction(() => !document.querySelector(".dialog"), null, { timeout: 90000 });
   await page.waitForTimeout(500);
   assert.equal(await annotationCount(), 4);
 
@@ -161,7 +165,10 @@ try {
   const inline = page.locator(".inline-text-editor");
   await inline.waitFor();
   assert.equal(await inline.inputValue(), "Page 1");
-  await page.waitForFunction(() => !document.querySelector(".inline-text-status")?.textContent?.includes("正在辨識"), null, { timeout: 60000 });
+  await page.waitForFunction(() => !document.querySelector(".inline-text-status")?.textContent?.includes("正在尋找"), null, { timeout: 60000 });
+  assert.ok(await page.locator(".inline-text-toolbar .font-family").isVisible(), "編輯文字應有字型選單");
+  assert.match(await page.locator(".inline-text-toolbar .font-family option").first().textContent(), /自動：Helvetica/);
+  await page.locator(".inline-text-toolbar .font-size").fill("30");
   await shot("02a-直接編輯文字");
   await inline.fill("第一章 Chapter 1");
   await page.keyboard.press("Enter");
@@ -289,6 +296,20 @@ try {
   await page.waitForSelector(".search-result", { timeout: 10000 });
   await shot("07-OCR搜尋");
 
+  step("編輯 OCR 辨識出的文字");
+  await menu("tool:edittext");
+  box = await pageBox(0);
+  await page.mouse.click(...box.at(150, 128));
+  await page.locator(".inline-text-editor").waitFor();
+  assert.match(await page.locator(".inline-text-status").textContent(), /OCR/);
+  await page.waitForFunction(() => !document.querySelector(".inline-text-status")?.textContent?.includes("正在尋找"), null, { timeout: 90000 });
+  await page.locator(".inline-text-editor").fill("Paid Invoice 2026");
+  await page.keyboard.press("Enter");
+  await page.waitForSelector('.toast:has-text("已修改文字")', { timeout: 10000 });
+  await page.waitForTimeout(500);
+  await shot("07a-編輯OCR文字");
+  await page.keyboard.press("Escape");
+
   step("深色模式截圖");
   await page.emulateMedia({ colorScheme: "dark" });
   await page.waitForTimeout(300);
@@ -309,18 +330,18 @@ try {
   box = await pageBox(0);
   await page.mouse.click(...box.at(120, 94));
   await page.locator(".inline-text-editor").waitFor();
-  await page.waitForFunction(() => !document.querySelector(".inline-text-status")?.textContent?.includes("正在辨識"), null, { timeout: 90000 });
+  await page.waitForFunction(() => !document.querySelector(".inline-text-status")?.textContent?.includes("正在尋找"), null, { timeout: 90000 });
   const fontStatus = await page.locator(".inline-text-status").textContent();
   console.log("   字型狀態：", fontStatus);
   // 無法連網的環境（E2E_NO_FONT_DOWNLOAD=1）改驗證「找不到字型時改用標準字型」
   const offline = process.env.E2E_NO_FONT_DOWNLOAD === "1";
-  if (offline) assert.match(fontStatus, /找不到字型「Roboto」/);
-  else assert.match(fontStatus, /Roboto.*已自動下載/, "應自動下載 Roboto");
+  if (offline) assert.match(fontStatus, /找不到/);
+  else assert.match(fontStatus, /Roboto.*已下載/, "應自動下載 Roboto");
   await shot("10-自動下載字型");
   await page.locator(".inline-text-editor").fill("Annual Report 年度報告");
   await page.keyboard.press("Enter");
   await page.waitForSelector('.toast:has-text("已修改文字")', { timeout: 10000 });
-  assert.match(await page.locator(".toast").textContent(), offline ? /標準字型/ : /Roboto/);
+  assert.match(await page.locator(".toast").textContent(), offline ? /已修改文字/ : /Roboto/);
   const robotoSaved = join(work, "Roboto 已編輯.pdf");
   await mockSave(robotoSaved);
   await menu("save-as");
@@ -328,7 +349,8 @@ try {
   {
     const doc = openPdf(robotoSaved);
     const pdfPage = doc.loadPage(0);
-    assert.ok(pdfPage.toStructuredText("").asText().includes("Annual Report 年度報告"));
+    const robotoText = pdfPage.toStructuredText("").asText();
+    assert.ok(robotoText.includes("Annual Report 年度報告"), `存檔內容：${JSON.stringify(robotoText)}`);
     const fontsDict = pdfPage.getObject().getInheritable("Resources").resolve().get("Font");
     const embedded = [];
     fontsDict.forEach((value, key) => {

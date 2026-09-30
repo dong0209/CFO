@@ -21,7 +21,16 @@ export interface FontRequest {
   system: FontCandidate[];
   /** 依序嘗試從 Google Fonts 下載的字族 */
   downloads: FontCandidate[];
+  /** 主要字型缺字時（例如英文字型遇到中文）使用的中文備援字型 */
+  fallback: { system: FontCandidate[]; downloads: FontCandidate[] } | null;
 }
+
+/** 可從 Google Fonts 下載的常用開源字型（字型選單用）。 */
+export const DOWNLOADABLE_FONTS = [
+  "Noto Sans TC", "Noto Serif TC", "LXGW WenKai TC", "Noto Sans SC", "Noto Serif SC", "Noto Sans JP", "Noto Serif JP", "Noto Sans KR",
+  "Roboto", "Open Sans", "Lato", "Montserrat", "Inter", "Source Sans 3", "Arimo", "Tinos", "Cousine", "Carlito", "Caladea",
+  "Merriweather", "Playfair Display", "EB Garamond", "Roboto Mono", "Source Code Pro",
+];
 
 interface KnownFont {
   keys: string[];
@@ -60,18 +69,35 @@ const WEIGHTS: Array<[RegExp, number]> = [
   [/w([1-9])\b/i, 0],
 ];
 
-/** 去除子集前綴（ABCDEF+）與 PDF 名稱中的 #xx 編碼。 */
+/** 去除子集前綴（ABCDEF+）與 PDF 名稱中的 #xx 編碼；Big5／GBK／Shift_JIS 編碼的中日文名稱會轉回正確文字。 */
 export function cleanFontName(name: string): string {
   let result = name.replace(/^[A-Z]{6}\+/, "");
-  if (/#[0-9a-f]{2}/i.test(result)) {
+  if (/#[0-9a-f]{2}/i.test(result)) result = result.replace(/#([0-9a-f]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+  return decodeLegacyName(result).trim();
+}
+
+const LEGACY_ENCODINGS = ["utf-8", "big5", "gbk", "shift_jis", "euc-kr"];
+/** 字型名稱常用字：同一串位元組可同時以 Big5 與 GBK 解碼時，用來判斷哪一個才對。 */
+const COMMON_NAME_CHARS = new Set([..."新細细明體体標标楷宋黑圓圆仿隸隶魏書书行粗中正微軟软雅準准華华康文鼎方漢汉儀仪字型形極极特超综綜藝艺海報报娃娃少女古印篆隸金梅王蒙納纳儷俪雅正黑繁簡简ゴシック明朝丸"]);
+
+/** PDF 名稱是位元組字串；非 ASCII 時依序嘗試常見的中日韓編碼，挑出最像字型名稱的結果。 */
+export function decodeLegacyName(text: string): string {
+  if (!/[\x80-\xff]/.test(text) || /[^\x00-\xff]/.test(text)) return text;
+  const bytes = Uint8Array.from(text, (c) => c.charCodeAt(0));
+  let best: { value: string; score: number } | null = null;
+  for (const [order, encoding] of LEGACY_ENCODINGS.entries()) {
+    let decoded: string;
     try {
-      const bytes = result.replace(/#([0-9a-f]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
-      result = new TextDecoder().decode(Uint8Array.from(bytes, (c) => c.charCodeAt(0)));
+      decoded = new TextDecoder(encoding, { fatal: true }).decode(bytes);
     } catch {
-      // 保留原字串
+      continue;
     }
+    if (!/[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\uf900-\ufaff]/.test(decoded) || /[\u0000-\u001f\ufffd]/.test(decoded)) continue;
+    // UTF-8 能完整解碼時幾乎一定正確；其他編碼依常用字數量評分，同分時依序優先
+    const score = encoding === "utf-8" ? 1000 : [...decoded].filter((c) => COMMON_NAME_CHARS.has(c)).length * 10 - order;
+    if (!best || score > best.score) best = { value: decoded, score };
   }
-  return result.trim();
+  return best?.value ?? text;
 }
 
 function normalizeKey(text: string): string {
@@ -110,44 +136,169 @@ export function parseFontName(rawName: string, bold = false, italic = false): { 
   return { family, weight, italic: isItalic, key: normalizeKey(base) };
 }
 
-/** 依原字型名稱產生尋找／下載字型的候選清單。 */
-export function fontRequestFor(rawName: string, bold = false, italic = false): FontRequest {
+export type FontKind = "sans" | "serif" | "mono" | "kai";
+export type FontScript = "latin" | "tc" | "sc" | "jp" | "kr";
+
+/** 各風格與文字的通用字型：Windows 與 macOS 內建字型，以及可下載的開源字型。 */
+const GENERIC: Record<FontScript, Record<FontKind, { system: string[]; download: string[] }>> = {
+  latin: {
+    sans: { system: ["Arial", "Helvetica", "Liberation Sans"], download: ["Arimo"] },
+    serif: { system: ["Times New Roman", "Times", "Liberation Serif"], download: ["Tinos"] },
+    mono: { system: ["Courier New", "Courier", "Menlo", "Consolas"], download: ["Cousine"] },
+    kai: { system: ["Times New Roman", "Times"], download: ["Tinos"] },
+  },
+  tc: {
+    sans: { system: ["Microsoft JhengHei", "PingFang TC", "Heiti TC", "Noto Sans CJK TC", "Noto Sans TC"], download: ["Noto Sans TC"] },
+    serif: { system: ["PMingLiU", "MingLiU", "Songti TC", "LiSong Pro", "Noto Serif CJK TC", "Noto Serif TC"], download: ["Noto Serif TC"] },
+    mono: { system: ["MingLiU", "Microsoft JhengHei", "PingFang TC"], download: ["Noto Sans TC"] },
+    kai: { system: ["DFKai-SB", "BiauKai", "Kaiti TC", "LXGW WenKai TC"], download: ["LXGW WenKai TC"] },
+  },
+  sc: {
+    sans: { system: ["Microsoft YaHei", "SimHei", "PingFang SC", "Heiti SC", "Noto Sans CJK SC"], download: ["Noto Sans SC"] },
+    serif: { system: ["SimSun", "Songti SC", "Noto Serif CJK SC"], download: ["Noto Serif SC"] },
+    mono: { system: ["SimSun", "Microsoft YaHei", "PingFang SC"], download: ["Noto Sans SC"] },
+    kai: { system: ["KaiTi", "Kaiti SC", "STKaiti"], download: ["LXGW WenKai TC"] },
+  },
+  jp: {
+    sans: { system: ["Yu Gothic", "Meiryo", "MS Gothic", "Hiragino Sans", "Noto Sans CJK JP"], download: ["Noto Sans JP"] },
+    serif: { system: ["Yu Mincho", "MS Mincho", "Hiragino Mincho ProN", "Noto Serif CJK JP"], download: ["Noto Serif JP"] },
+    mono: { system: ["MS Gothic", "Osaka-Mono"], download: ["Noto Sans JP"] },
+    kai: { system: ["Yu Mincho", "Hiragino Mincho ProN"], download: ["Noto Serif JP"] },
+  },
+  kr: {
+    sans: { system: ["Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans CJK KR"], download: ["Noto Sans KR"] },
+    serif: { system: ["Batang", "AppleMyungjo", "Noto Serif CJK KR"], download: ["Noto Serif KR"] },
+    mono: { system: ["GulimChe", "Malgun Gothic"], download: ["Noto Sans KR"] },
+    kai: { system: ["Batang", "AppleMyungjo"], download: ["Noto Serif KR"] },
+  },
+};
+
+/** 由文字內容判斷語系（沒有中日韓文字時為 latin，漢字預設為繁體中文）。 */
+export function scriptOf(text: string): FontScript {
+  if (/[\u3040-\u30ff]/.test(text)) return "jp";
+  if (/[\uac00-\ud7af]/.test(text)) return "kr";
+  if (/[\u3400-\u9fff\uf900-\ufaff]/.test(text)) return "tc";
+  return "latin";
+}
+
+/** 由字型名稱中的關鍵字判斷風格（例如華康明體、文鼎楷書、蒙納黑體）。 */
+export function kindFromName(name: string): FontKind | null {
+  const key = normalizeKey(name);
+  if (/kai|楷|biau/.test(key)) return "kai";
+  if (/mono|courier|consol|code/.test(key)) return "mono";
+  if (/ming|song|明|宋|mincho|serif|batang|myungjo|roman|times|garamond|georgia|仿/.test(key)) return "serif";
+  if (/hei|黑|gothic|yuan|圓|圆|sans|gulim|dotum|jhenghei|yahei|arial|helvetica|pingfang|roboto|lato|inter|montserrat|segoe|calibri|verdana|tahoma|ubuntu|arimo|futura|frutiger|myriad/.test(key)) return "sans";
+  return null;
+}
+
+/** 由字型名稱判斷語系（名稱帶有 TC、SC、JP、GB、Big5 等）；`key` 為去除樣式後的名稱。 */
+function scriptFromName(key: string, name: string): FontScript | null {
+  if (/(tc|hk|big5|b5|cns)$|繁/.test(key)) return "tc";
+  if (/(sc|gb|gbk|gb2312)$|简/.test(key)) return "sc";
+  if (/(jp|jis|pron?|std)$/.test(key) && /hiragino|kozuka|mincho|gothic/.test(key)) return "jp";
+  if (/(jp|jis)$|msmincho|msgothic|meiryo|yugothic|yumincho|ゴシック|明朝/.test(key)) return "jp";
+  if (/(kr|ks)$|gulim|batang|dotum|malgun|myungjo|nanum/.test(key)) return "kr";
+  if (/[\u3040-\u30ff]/.test(name)) return "jp";
+  if (/[\u3400-\u9fff]/.test(name)) return /[简体]/.test(name) ? "sc" : "tc";
+  return null;
+}
+
+function genericCandidates(kind: FontKind, script: FontScript) {
+  const entry = GENERIC[script][kind];
+  return { system: entry.system.map((family) => ({ family, exact: false })), downloads: entry.download.map((family) => ({ family, exact: false })) };
+}
+
+function dedupe(list: FontCandidate[]): FontCandidate[] {
+  const seen = new Set<string>();
+  return list.filter((c) => {
+    const key = normalizeKey(c.family);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export interface FontHints {
+  serif?: boolean;
+  mono?: boolean;
+  /** 這一行原本的文字，用來判斷語系 */
+  text?: string;
+}
+
+/**
+ * 依原字型名稱產生尋找／下載字型的候選清單。
+ * 依序為：原字型本身 → 已知對應（商用字型的相容字型）→ 依名稱關鍵字與文字語系推測的相近字型。
+ */
+export function fontRequestFor(rawName: string, bold = false, italic = false, hints: FontHints = {}): FontRequest {
   const parsed = parseFontName(rawName, bold, italic);
   const originalName = cleanFontName(rawName);
   const key = parsed.key;
+  const textScript = scriptOf(hints.text ?? "");
+  let nameScript = scriptFromName(key, originalName);
+  const kind: FontKind = kindFromName(originalName) ?? (hints.mono ? "mono" : hints.serif ? "serif" : "sans");
+
+  let family = parsed.family;
+  let system: FontCandidate[] = [{ family: originalName, exact: true }];
+  let downloads: FontCandidate[] = [];
+  let weight = parsed.weight;
+  let isItalic = parsed.italic;
+
   const known = KNOWN.find((k) => k.keys.some((candidate) => key === candidate || (candidate.length >= 5 && key.startsWith(candidate))));
-  if (known) {
-    return {
-      originalName,
-      family: known.family,
-      weight: parsed.weight,
-      italic: parsed.italic,
-      system: [{ family: originalName, exact: true }, ...known.system.map((family, i) => ({ family, exact: i === 0 }))],
-      downloads: known.download,
-    };
-  }
-
-  // 思源／Noto CJK 系列對應 Google Fonts 上的 Noto Sans TC 等字族
   const cjk = key.match(/^(?:noto|sourcehan)(sans|serif)(?:cjk)?(tc|sc|jp|kr|hk)/);
-  if (cjk) {
-    const family = `Noto ${cjk[1] === "sans" ? "Sans" : "Serif"} ${cjk[2].toUpperCase()}`;
-    return {
-      originalName,
-      family,
-      weight: parsed.weight,
-      italic: false,
-      system: [{ family: originalName, exact: true }, { family, exact: true }],
-      downloads: [{ family, exact: true }],
-    };
+  if (known) {
+    family = known.family;
+    nameScript ??= scriptFromName(normalizeKey(known.family), known.family) ?? (/gothic|mincho/i.test(known.family) ? "jp" : null);
+    system.push(...known.system.map((f, i) => ({ family: f, exact: i === 0 })));
+    downloads = [...known.download];
+  } else if (cjk) {
+    // 思源／Noto CJK 系列對應 Google Fonts 上的 Noto Sans TC 等字族
+    family = `Noto ${cjk[1] === "sans" ? "Sans" : "Serif"} ${cjk[2] === "hk" ? "HK" : cjk[2].toUpperCase()}`;
+    system.push({ family, exact: true });
+    downloads = [{ family, exact: true }];
+    isItalic = false;
+  } else {
+    system.push({ family: parsed.family, exact: true });
+    if (parsed.family.length >= 3 && /^[\x20-\x7e]+$/.test(parsed.family)) downloads.push({ family: parsed.family, exact: true });
   }
 
+  const script = nameScript ?? textScript;
+  // 找不到同名字型時，改用風格與語系相同的常見字型
+  const generic = genericCandidates(kind, script);
+  system = dedupe([...system, ...generic.system]);
+  downloads = dedupe([...downloads, ...generic.downloads]);
+
+  // 英文字型遇到中文時的備援：依風格挑選相近的中文字型
+  const cjkScript = textScript !== "latin" ? textScript : nameScript && nameScript !== "latin" ? nameScript : "tc";
+  const fallback = script === "latin" ? genericCandidates(kind === "mono" ? "sans" : kind, cjkScript) : null;
+  return { originalName, family, weight, italic: isItalic, system, downloads, fallback };
+}
+
+/** OCR 辨識出的文字沒有原字型可用（字形在掃描影像中），依語系使用常見的無襯線字型。 */
+export function ocrFontRequest(text: string, bold = false): FontRequest {
+  const script = scriptOf(text);
+  const generic = genericCandidates("sans", script);
   return {
-    originalName,
-    family: parsed.family,
-    weight: parsed.weight,
-    italic: parsed.italic,
-    system: [{ family: originalName, exact: true }, { family: parsed.family, exact: true }],
-    downloads: parsed.family.length >= 3 && /^[\x20-\x7e]+$/.test(parsed.family) ? [{ family: parsed.family, exact: true }] : [],
+    originalName: "掃描影像中的文字（OCR）",
+    family: generic.system[0].family,
+    weight: bold ? 700 : 400,
+    italic: false,
+    system: generic.system,
+    downloads: generic.downloads,
+    fallback: script === "latin" ? genericCandidates("sans", "tc") : null,
+  };
+}
+
+/** 使用者手動選擇的字型。 */
+export function chosenFontRequest(family: string, weight: number, italic: boolean, downloadable: boolean): FontRequest {
+  const candidate = [{ family, exact: true }];
+  return {
+    originalName: family,
+    family,
+    weight,
+    italic,
+    system: downloadable ? [] : candidate,
+    downloads: downloadable ? candidate : [],
+    fallback: scriptOf(family) === "latin" && !/tc|sc|jp|kr|cjk|hei|ming|song|kai/i.test(family) ? genericCandidates("sans", "tc") : null,
   };
 }
 
