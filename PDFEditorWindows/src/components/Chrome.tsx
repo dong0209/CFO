@@ -210,7 +210,7 @@ function ZoomBox({ zoom }: { zoom: number }) {
 // MARK: - 狀態列
 
 const HINTS: Record<Tool, string> = {
-  edittext: "點一下頁面上的文字即可直接修改（原文會被真正取代）；Enter 套用、Esc 取消",
+  edittext: "點一下文字即可直接修改；掃描檔的 OCR 範圍不對時，拖曳框選要修改的範圍重新辨識；Enter 套用、Esc 取消",
   select: "點選註解可拖曳移動、按 Delete 刪除；雙擊文字註解可編輯；拖曳可選取文字（Ctrl+C 複製）",
   highlight: "拖曳選取文字即可加上螢光筆",
   underline: "拖曳選取文字即可加上底線",

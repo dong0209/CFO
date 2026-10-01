@@ -103,6 +103,7 @@ extension EditorDocument {
         let workspace = Workspace.shared
         workspace.beginProgress("正在辨識文字（OCR）…", total: targets.count)
         let languages = language.visionLanguages
+        UserDefaults.standard.set(language.rawValue, forKey: Self.ocrLanguageKey)
 
         Task { @MainActor in
             defer { workspace.endProgress() }

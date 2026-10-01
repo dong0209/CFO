@@ -2,7 +2,7 @@ import * as mupdf from "mupdf";
 import { beforeEach, describe, expect, it } from "vitest";
 import { chosenFontRequest, cleanFontName, fontRequestFor, fontUrlFromCss, googleFontsCssUrl, isReliableText, ocrFontRequest, parseFontName } from "../src/engine/fonts";
 import { PdfEngine } from "../src/engine/pdfEngine";
-import { builtinFontBytes, makeEmbeddedFontPdf, makePdf, makeRenamedFontPdf, makeScannedPdf, makeStyledPdf, regionColor } from "./helpers";
+import { builtinFontBytes, makeEmbeddedFontPdf, makePdf, makeRenamedFontPdf, makeScannedPdf, makeScannedTablePdf, makeStyledPdf, regionColor } from "./helpers";
 
 describe("字型名稱辨識", () => {
   it("解析字族、粗細與斜體", () => {
@@ -237,6 +237,44 @@ describe("編輯文字時的字型", () => {
     const saved = engine.save(id);
     expect(Math.abs(regionColor(saved, [72, 118, 340, 150])[0] - 242)).toBeLessThan(8);
     expect(regionColor(saved, [72, 232, 160, 244])[0]).toBeLessThan(200);
+  });
+
+  it("OCR 文字跨過表格格線：抹掉文字時保留格線", () => {
+    const { id } = engine.open(makeScannedTablePdf());
+    // OCR 把兩個儲存格辨識成同一行
+    engine.applyOcr(id, 0, [{ text: "Left cell Right cell", bbox: [78, 118, 400, 148] }]);
+    engine.replaceTextLine(id, 0, 0, "");
+    const saved = engine.save(id);
+    // 文字消失
+    expect(regionColor(saved, [85, 122, 240, 145])[0]).toBeGreaterThan(245);
+    expect(regionColor(saved, [262, 122, 395, 145])[0]).toBeGreaterThan(245);
+    // 直的格線（x=250）與上下橫線仍在
+    expect(regionColor(saved, [249, 115, 251, 150])[0]).toBeLessThan(120);
+    expect(regionColor(saved, [100, 99, 230, 101])[0]).toBeLessThan(150);
+    expect(regionColor(saved, [100, 159, 230, 161])[0]).toBeLessThan(150);
+  });
+
+  it("框選範圍重新辨識：改成一行可編輯的 OCR 文字", () => {
+    const { id } = engine.open(makeScannedTablePdf());
+    engine.applyOcr(id, 0, [{ text: "Left cell Right cell", bbox: [78, 118, 400, 148] }]);
+    const png = engine.regionImage(id, 0, [70, 110, 245, 155], 144);
+    const image = new mupdf.Image(png);
+    expect([image.getWidth(), image.getHeight()]).toEqual([350, 90]);
+
+    const index = engine.setOcrRegion(id, 0, [70, 110, 245, 155], "Left cell", [78, 118, 168, 148]);
+    const lines = engine.textLines(id, 0);
+    expect(lines[index]).toMatchObject({ text: "Left cell", ocr: true });
+    engine.replaceTextLine(id, 0, index, "Changed");
+    const saved = engine.save(id);
+    // 右邊儲存格的影像不受影響，格線仍在
+    expect(regionColor(saved, [270, 122, 395, 145])[0]).toBeLessThan(235);
+    expect(regionColor(saved, [249, 115, 251, 150])[0]).toBeLessThan(120);
+    const text = engine.textLines(engine.open(saved).id, 0).map((l) => l.text).join("|");
+    expect(text).toContain("Changed");
+    expect(text).not.toContain("Left cell");
+    // 範圍內有一般文字時拒絕
+    const normal = engine.open(makePdf(1)).id;
+    expect(() => engine.setOcrRegion(normal, 0, [60, 70, 250, 110], "x")).toThrow(/一般文字/);
   });
 
   it("提供字型建議清單", () => {

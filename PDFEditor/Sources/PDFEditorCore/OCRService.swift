@@ -59,6 +59,34 @@ public enum OCRService {
         }
     }
 
+    /// 重新辨識頁面上的某個範圍（頁面座標）：回傳文字（多行以空白連接）與文字實際所在的外框（頁面座標）。
+    public static func recognizeRegion(of page: PDFPage, rect: CGRect, languages: [String], dpi: CGFloat = 300) throws -> (text: String, box: CGRect?) {
+        let mediaBox = page.bounds(for: .mediaBox)
+        let area = rect.intersection(mediaBox)
+        guard !area.isNull, area.width > 1, area.height > 1,
+              let image = PageRenderer.unrotatedContentImage(for: page, dpi: dpi) else { return ("", nil) }
+        let scale = dpi / 72
+        // CGImage 的原點在左上
+        let pixels = CGRect(x: (area.minX - mediaBox.minX) * scale, y: (mediaBox.maxY - area.maxY) * scale, width: area.width * scale, height: area.height * scale)
+            .integral
+            .intersection(CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard !pixels.isNull, let cropped = image.cropping(to: pixels) else { return ("", nil) }
+        // 實際裁切到的範圍（頁面座標）
+        let cropRect = CGRect(x: mediaBox.minX + pixels.minX / scale, y: mediaBox.maxY - pixels.maxY / scale, width: pixels.width / scale, height: pixels.height / scale)
+        let lines = try recognizeText(in: cropped, languages: languages).filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
+        var box: CGRect?
+        for line in lines {
+            let lineBox = CGRect(
+                x: cropRect.minX + line.normalizedBox.minX * cropRect.width,
+                y: cropRect.minY + line.normalizedBox.minY * cropRect.height,
+                width: line.normalizedBox.width * cropRect.width,
+                height: line.normalizedBox.height * cropRect.height
+            )
+            box = box.map { $0.union(lineBox) } ?? lineBox
+        }
+        return (lines.map(\.text).joined(separator: " "), box)
+    }
+
     /// 建立含原始內容與隱形文字層的新頁面。`lines` 需以頁面 mediaBox（未旋轉）的影像辨識取得。
     public static func searchablePage(from page: PDFPage, lines: [RecognizedLine]) -> PDFPage? {
         let mediaBox = page.bounds(for: .mediaBox)

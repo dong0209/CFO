@@ -333,6 +333,39 @@ final class TextEditEngineTests: XCTestCase {
     }
 
     @MainActor
+    func testRegionOCRCreatesEditableLine() async throws {
+        guard PDFEngineBridge.engineDirectory != nil else {
+            throw XCTSkip("尚未建置文字編輯引擎")
+        }
+        _ = NSApplication.shared
+        // 掃描頁（沒有文字層），框選「Page 1」所在的範圍
+        let source = makeDocument(pages: 1)
+        let page = try XCTUnwrap(source.page(at: 0))
+        let mediaBox = page.bounds(for: .mediaBox)
+        let image = try XCTUnwrap(PageRenderer.image(for: page, dpi: 144))
+        let scanned = try XCTUnwrap(PageRenderer.makePage(like: page) { context in
+            context.draw(image, in: mediaBox)
+        })
+        let document = PDFDocument()
+        document.insert(scanned, at: 0)
+        let data = try XCTUnwrap(document.dataRepresentation())
+        let region = CGRect(x: 60, y: 690, width: 120, height: 40)
+
+        let recognized = try OCRService.recognizeRegion(of: scanned, rect: region, languages: ["en-US"])
+        XCTAssertTrue(recognized.text.contains("Page"), "Vision 應辨識出框選範圍的文字：\(recognized.text)")
+        if let box = recognized.box {
+            XCTAssertTrue(region.insetBy(dx: -2, dy: -2).contains(box), "文字外框應在框選範圍內：\(box)")
+        }
+
+        let prepared = try await PDFEngineBridge.shared.preparingOCRRegion(in: data, password: nil, page: 0, rect: region, text: "Page 1", box: CGRect(x: 72, y: 696, width: 70, height: 24))
+        XCTAssertEqual(prepared.line.text, "Page 1")
+        XCTAssertTrue(prepared.line.isOCR)
+        let edited = try await PDFEngineBridge.shared.replacingTextLine(in: prepared.data, password: nil, page: 0, line: prepared.line.index, with: "Page 9")
+        let editedPage = try XCTUnwrap(PDFDocument(data: edited.data)?.page(at: 0))
+        XCTAssertTrue((editedPage.string ?? "").contains("Page 9"))
+    }
+
+    @MainActor
     func testEncryptedDocumentNeedsPassword() async throws {
         guard PDFEngineBridge.engineDirectory != nil else {
             throw XCTSkip("尚未建置文字編輯引擎")

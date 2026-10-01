@@ -103,3 +103,23 @@ export function regionColor(data: Uint8Array, rect: [number, number, number, num
   }
   return sum.map((v) => Math.round(v / count));
 }
+
+/**
+ * 模擬掃描的表格：兩個儲存格「Left cell」「Right cell」之間有一條直的格線（x=250），
+ * 上下各有一條橫的格線（y=100、y=160，頁面座標）。整頁為影像，沒有文字層。
+ */
+export function makeScannedTablePdf(): Uint8Array {
+  const source = new mupdf.PDFDocument();
+  const font = source.addSimpleFont(new mupdf.Font("Helvetica"));
+  const content = [
+    "1 1 1 rg 0 0 595 842 re f",
+    "0 0 0 RG 1.5 w 60 742 m 450 742 l S 60 682 m 450 682 l S 250 682 m 250 742 l S",
+    "0 g BT /F1 24 Tf 80 700 Td (Left cell) Tj ET BT /F1 24 Tf 270 700 Td (Right cell) Tj ET",
+  ].join("\n");
+  source.insertPage(0, source.addPage([0, 0, 595, 842], 0, { Font: { F1: font } }, content));
+  const pixmap = source.loadPage(0).toPixmap(mupdf.Matrix.scale(2, 2), mupdf.ColorSpace.DeviceRGB, false);
+  const doc = new mupdf.PDFDocument();
+  const image = doc.addImage(new mupdf.Image(pixmap));
+  doc.insertPage(0, doc.addPage([0, 0, 595, 842], 0, { XObject: { Im0: image } }, "q 595 0 0 842 0 0 cm /Im0 Do Q"));
+  return doc.saveToBuffer("compress").asUint8Array().slice();
+}

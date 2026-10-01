@@ -209,6 +209,44 @@ final class EditorDocument: ObservableObject, Identifiable {
         }
     }
 
+    static let ocrLanguageKey = "OCRLanguage"
+
+    /// 框選範圍重新辨識：以 Vision 辨識範圍內的文字，取代範圍內原本的 OCR 文字，並直接開啟編輯框。
+    /// 取消編輯時不會留下任何變更。
+    func beginRegionEdit(_ rect: CGRect, on page: PDFPage) {
+        guard !isEditingText, rect.width > 4, rect.height > 4 else { return }
+        let pageIndex = pdf.index(for: page)
+        guard pageIndex != NSNotFound else { return }
+        bakeCustomAnnotations()
+        guard let data = pdf.dataRepresentation(), let currentPage = pdf.page(at: pageIndex) else { return }
+        isEditingText = true
+        let password = security?.userPassword
+        let language = OCRService.Language(rawValue: UserDefaults.standard.string(forKey: Self.ocrLanguageKey) ?? "") ?? .traditionalChinese
+        let languages = language.visionLanguages
+        let workspace = Workspace.shared
+        workspace.beginProgress("正在辨識框選的範圍…", total: 1)
+        Task { @MainActor in
+            do {
+                // 只辨識框選的小範圍，速度很快，直接在主執行緒處理（PDFPage 不可跨執行緒使用）
+                let recognized = try OCRService.recognizeRegion(of: currentPage, rect: rect, languages: languages)
+                let prepared = try await PDFEngineBridge.shared.preparingOCRRegion(
+                    in: data, password: password, page: pageIndex, rect: rect, text: recognized.text, box: recognized.box
+                )
+                workspace.endProgress()
+                pdfView?.showInlineEditor(for: prepared.line, request: prepared.request, on: currentPage) { [weak self] result in
+                    guard let self else { return }
+                    self.isEditingText = false
+                    guard let result else { return }
+                    self.commitTextEdit(data: prepared.data, password: password, pageIndex: pageIndex, line: prepared.line, result: result)
+                }
+            } catch {
+                workspace.endProgress()
+                isEditingText = false
+                Panels.showError(error, title: "無法重新辨識這個範圍")
+            }
+        }
+    }
+
     private func commitTextEdit(data: Data, password: String?, pageIndex: Int, line: EditableTextLine, result: InlineEditResult) {
         let settings = result.settings
         let colorChanged = !Self.sameColor(settings.color, line.nsColor)

@@ -667,14 +667,7 @@ export class PdfEngine {
       const page = this.load(doc, pageIndex);
       const runs = lines
         .filter((line) => line.text.trim() !== "")
-        .map((line) => {
-          const [x0, y0, x1, y1] = line.bbox;
-          const height = Math.max(y1 - y0, 1);
-          const size = height * 0.85;
-          const natural = this.textWidth(line.text) * size;
-          const scale = natural > 0 ? (x1 - x0) / natural : 1;
-          return { text: line.text, matrix: textMatrix([x0, y1 - height * 0.15], size, 0, scale) };
-        });
+        .map((line) => this.ocrRun(line.text, line.bbox));
       if (runs.length) this.appendText(doc, page, runs, [0, 0, 0], 1, true, "ocr");
     });
   }
@@ -1105,14 +1098,100 @@ export class PdfEngine {
   private paintBackground(doc: mupdf.PDFDocument, page: mupdf.PDFPage, area: Rect) {
     const rendered = page.toPixmap(mupdf.Matrix.scale(SAMPLE_SCALE, SAMPLE_SCALE), mupdf.ColorSpace.DeviceRGB, false, false);
     const { background } = sampleColors(rendered, area, SAMPLE_SCALE);
+    // 保留區域中的格線：只蓋住格線之間的部分
+    const px = [
+      Math.max(0, Math.floor(area[0] * SAMPLE_SCALE)),
+      Math.max(0, Math.floor(area[1] * SAMPLE_SCALE)),
+      Math.min(rendered.getWidth(), Math.ceil(area[2] * SAMPLE_SCALE)),
+      Math.min(rendered.getHeight(), Math.ceil(area[3] * SAMPLE_SCALE)),
+    ] as Rect;
+    const rules = ruleLines(rendered.getPixels(), rendered.getStride(), rendered.getNumberOfComponents(), px, background.map((v) => v * 255));
     rendered.destroy();
+    const runs = (keep: boolean[], start: number): Array<[number, number]> => {
+      const result: Array<[number, number]> = [];
+      let from = -1;
+      keep.forEach((k, i) => {
+        if (!k && from < 0) from = i;
+        if (k && from >= 0) {
+          result.push([start + from, start + i]);
+          from = -1;
+        }
+      });
+      if (from >= 0) result.push([start + from, start + keep.length]);
+      return result;
+    };
+    const toUser = invert(page.getTransform() as Matrix);
+    const rects: string[] = [];
+    for (const [cx0, cx1] of runs(rules.cols, px[0])) {
+      for (const [ry0, ry1] of runs(rules.rows, px[1])) {
+        const [ux0, uy0, ux1, uy1] = transformRect([cx0 / SAMPLE_SCALE, ry0 / SAMPLE_SCALE, cx1 / SAMPLE_SCALE, ry1 / SAMPLE_SCALE], toUser);
+        rects.push(`${fmt(ux0)} ${fmt(uy0)} ${fmt(ux1 - ux0)} ${fmt(uy1 - uy0)} re`);
+      }
+    }
+    if (!rects.length) return;
     const pageObj = page.getObject();
-    const [x0, y0, x1, y1] = transformRect(area, invert(page.getTransform() as Matrix));
     wrapContents(doc, pageObj);
-    const stream = doc.addStream(`q ${background.map(fmt).join(" ")} rg ${fmt(x0)} ${fmt(y0)} ${fmt(x1 - x0)} ${fmt(y1 - y0)} re f Q`, { [STAMP_KEY]: doc.newName("edit") });
+    const stream = doc.addStream(`q ${background.map(fmt).join(" ")} rg ${rects.join(" ")} f Q`, { [STAMP_KEY]: doc.newName("edit") });
     const contents = pageObj.get("Contents");
     if (contents.isArray()) contents.push(stream);
     else pageObj.put("Contents", [contents, stream]);
+  }
+
+  /** 頁面某區域（頁面座標）的 PNG 影像（不含註解），用來重新辨識文字。 */
+  regionImage(id: number, pageIndex: number, rect: Rect, dpi = 300): Uint8Array {
+    const page = this.page(id, pageIndex);
+    const scale = dpi / 72;
+    const matrix = mupdf.Matrix.scale(scale, scale);
+    const [x0, y0, x1, y1] = normalizeRect([rect[0], rect[1]], [rect[2], rect[3]]);
+    const bbox: Rect = [Math.floor(x0 * scale), Math.floor(y0 * scale), Math.ceil(x1 * scale), Math.ceil(y1 * scale)];
+    const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, bbox, false);
+    pixmap.clear(255);
+    const device = new mupdf.DrawDevice(matrix, pixmap);
+    page.runPageContents(device, mupdf.Matrix.identity);
+    device.close();
+    const png = pixmap.asPNG().slice();
+    pixmap.destroy();
+    return png;
+  }
+
+  /**
+   * 使用者框選範圍重新辨識：移除範圍內原本的 OCR 文字，改以 `text`（放在 `textBox`，沒有時用整個範圍）作為一行 OCR 文字，
+   * 回傳這一行的索引，之後即可用 replaceTextLine 修改。範圍內有一般（非 OCR）文字時不處理。
+   */
+  setOcrRegion(id: number, pageIndex: number, rect: Rect, text: string, textBox: Rect | null = null): number {
+    const area = normalizeRect([rect[0], rect[1]], [rect[2], rect[3]]);
+    const inside = (l: TextLine) => rectContains(area, [(l.bbox[0] + l.bbox[2]) / 2, (l.bbox[1] + l.bbox[3]) / 2]);
+    if (this.textLines(id, pageIndex).some((l) => !l.ocr && rectsIntersect(inflate(area, -1), l.bbox))) {
+      throw new Error("這個範圍內有一般文字（不是掃描影像中的字），請直接點選該行文字修改");
+    }
+    const box = textBox ? normalizeRect([textBox[0], textBox[1]], [textBox[2], textBox[3]]) : area;
+    const content = text.replace(/\s+/g, " ").trim() || "?";
+    this.op(id, "重新辨識範圍", (doc) => {
+      const page = this.load(doc, pageIndex);
+      const redact = page.createAnnotation("Redact");
+      redact.setRect(area);
+      redact.update();
+      redact.applyRedaction(0, mupdf.PDFPage.REDACT_IMAGE_NONE, mupdf.PDFPage.REDACT_LINE_ART_NONE, mupdf.PDFPage.REDACT_TEXT_REMOVE);
+      this.appendText(doc, page, [this.ocrRun(content, box)], [0, 0, 0], 1, true, "ocr");
+    });
+    const index = this.textLines(id, pageIndex).find((l) => l.ocr && inside(l))?.index;
+    if (index === undefined) throw new Error("無法建立可編輯的文字");
+    return index;
+  }
+
+  /** 與 setOcrRegion 相同，但範圍以 PDF 使用者座標（原點在左下，macOS PDFKit 使用）表示。 */
+  setOcrRegionAtUserRect(id: number, pageIndex: number, rect: Rect, text: string, textBox: Rect | null = null): number {
+    const m = this.page(id, pageIndex).getTransform() as Matrix;
+    return this.setOcrRegion(id, pageIndex, transformRect(rect, m), text, textBox ? transformRect(textBox, m) : null);
+  }
+
+  /** OCR 文字：字級依外框高度，水平縮放讓寬度與外框相同。 */
+  private ocrRun(text: string, [x0, y0, x1, y1]: Rect): { text: string; matrix: Matrix } {
+    const height = Math.max(y1 - y0, 1);
+    const size = height * 0.85;
+    const natural = this.textWidth(text) * size;
+    const scale = natural > 0 ? (x1 - x0) / natural : 1;
+    return { text, matrix: textMatrix([x0, y1 - height * 0.15], size, 0, scale) };
   }
 
   // MARK: - 遮蓋、平面化
@@ -1435,14 +1514,53 @@ function fillWithBackground(pixmap: mupdf.Pixmap, [x0, y0, x1, y1]: Rect) {
     const far = (c: number[]) => c.some((v, i) => Math.abs(v - whole[i]) > 40);
     rows.push([far(left) ? whole : left, far(right) ? whole : right]);
   }
+  // 表格格線、底線等貫穿整個區域的直線要保留，不可一起抹掉
+  const rules = ruleLines(pixels, stride, n, [x0, y0, x1, y1], whole);
   for (let y = y0; y < y1; y++) {
+    if (rules.rows[y - y0]) continue;
     const [left, right] = rows[y - y0];
     for (let x = x0; x < x1; x++) {
+      if (rules.cols[x - x0]) continue;
       const t = x1 - x0 > 1 ? (x - x0) / (x1 - x0 - 1) : 0;
       const i = y * stride + x * n;
       for (let c = 0; c < n; c++) pixels[i + c] = Math.round(left[c] * (1 - t) + right[c] * t);
     }
   }
+}
+
+/**
+ * 找出區域中貫穿整個高度的直線（欄）與貫穿整個寬度的橫線（列），例如表格格線。
+ * 掃描檔的線可能略微傾斜，因此直線以相鄰三欄合計判斷；結果會向外多保留 1 像素（反鋸齒邊緣）。
+ */
+export function ruleLines(pixels: Uint8ClampedArray, stride: number, n: number, [x0, y0, x1, y1]: Rect, background: number[]): { cols: boolean[]; rows: boolean[] } {
+  const w = Math.max(0, x1 - x0);
+  const h = Math.max(0, y1 - y0);
+  const channels = Math.min(3, n);
+  const ink = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y + y0) * stride + (x + x0) * n;
+      let d = 0;
+      for (let c = 0; c < channels; c++) d += Math.abs(pixels[i + c] - background[c]);
+      if (d * (3 / channels) > 90) ink[y * w + x] = 1;
+    }
+  }
+  const at = (x: number, y: number) => x >= 0 && x < w && y >= 0 && y < h && ink[y * w + x] === 1;
+  // 某一欄：每一列在這一欄或左右相鄰欄有墨跡 → 幾乎每一列都有才算直線（容許輕微傾斜，但粗筆畫只覆蓋部分高度不會算）
+  const cols = Array.from({ length: w }, (_, x) => {
+    let covered = 0;
+    for (let y = 0; y < h; y++) if (at(x - 1, y) || at(x, y) || at(x + 1, y)) covered++;
+    return h >= 4 && covered >= h * 0.9 && Array.from({ length: h }, (_, y) => at(x, y)).filter(Boolean).length >= h * 0.3;
+  });
+  const rows = Array.from({ length: h }, (_, y) => {
+    let covered = 0;
+    for (let x = 0; x < w; x++) if (at(x, y - 1) || at(x, y) || at(x, y + 1)) covered++;
+    let own = 0;
+    for (let x = 0; x < w; x++) if (at(x, y)) own++;
+    return w >= 4 && covered >= w * 0.9 && own >= w * 0.3;
+  });
+  const dilate = (list: boolean[]) => list.map((v, i) => v || list[i - 1] === true || list[i + 1] === true);
+  return { cols: dilate(cols), rows: dilate(rows) };
 }
 
 export interface ReplaceResult {

@@ -70,7 +70,8 @@ final class EditorPDFView: PDFView {
             super.mouseDown(with: event)
 
         case .editText:
-            editor.beginTextEdit(at: point, on: page)
+            // 點一下：編輯該行；拖曳：框選範圍重新辨識（放開滑鼠時判斷）
+            break
 
         case .highlight, .underline, .strikeout:
             super.mouseDown(with: event)
@@ -127,6 +128,10 @@ final class EditorPDFView: PDFView {
         }
 
         let tool = tools.tool
+        if tool == .editText {
+            showRegionSelection(from: dragStart, to: point, on: page)
+            return
+        }
         guard let live = liveAnnotation else {
             super.mouseDragged(with: event)
             return
@@ -167,6 +172,17 @@ final class EditorPDFView: PDFView {
         }
 
         switch tool {
+        case .editText:
+            regionOverlay?.removeFromSuperview()
+            regionOverlay = nil
+            let end = pagePoint(for: event).map { $0.0 === page ? $0.1 : convert(convert(event.locationInWindow, from: nil), to: page) } ?? dragStart
+            let rect = CGRect(x: min(dragStart.x, end.x), y: min(dragStart.y, end.y), width: abs(end.x - dragStart.x), height: abs(end.y - dragStart.y))
+            if hypot(rect.width, rect.height) * scaleFactor < 5 {
+                editor.beginTextEdit(at: dragStart, on: page)
+            } else {
+                editor.beginRegionEdit(rect, on: page)
+            }
+
         case .highlight, .underline, .strikeout:
             super.mouseUp(with: event)
             if let selection = currentSelection, !(selection.string ?? "").isEmpty {
@@ -223,6 +239,25 @@ final class EditorPDFView: PDFView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    // MARK: - 框選範圍重新辨識
+
+    private var regionOverlay: NSView?
+
+    private func showRegionSelection(from start: CGPoint, to end: CGPoint, on page: PDFPage) {
+        let pageRect = CGRect(x: min(start.x, end.x), y: min(start.y, end.y), width: abs(end.x - start.x), height: abs(end.y - start.y))
+        let overlay = regionOverlay ?? {
+            let view = NSView()
+            view.wantsLayer = true
+            view.layer?.borderWidth = 1.5
+            view.layer?.borderColor = NSColor.controlAccentColor.cgColor
+            view.layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor
+            addSubview(view)
+            regionOverlay = view
+            return view
+        }()
+        overlay.frame = convert(pageRect, from: page)
     }
 
     // MARK: - 直接編輯文字

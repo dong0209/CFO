@@ -251,3 +251,4 @@ hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
 .font-controls .font-color { width: 32px; height: 26px; padding: 0 2px; }
 .textbox-input { width: 100%; box-sizing: border-box; min-height: 120px; line-height: 1.3; resize: vertical; }
 .inline-text-status .warning { color: var(--danger); font-weight: 600; }
+.region-select { fill: rgba(15, 108, 189, 0.12); stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 3; }

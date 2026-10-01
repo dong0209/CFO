@@ -297,9 +297,20 @@ try {
   await page.waitForSelector(".search-result", { timeout: 10000 });
   await shot("07-OCR搜尋");
 
-  step("編輯 OCR 辨識出的文字");
+  step("框選範圍重新辨識 OCR 文字");
   await menu("tool:edittext");
   box = await pageBox(0);
+  await drag(box.at(60, 100), box.at(300, 160));
+  await page.locator(".inline-text-editor").waitFor({ timeout: 120000 });
+  const regionText = await page.locator(".inline-text-editor").inputValue();
+  console.log("   框選範圍辨識：", regionText);
+  assert.match(regionText, /Scanned|Invoice/i);
+  await shot("07b-框選範圍重新辨識");
+  await page.keyboard.press("Escape");
+  await page.waitForSelector(".inline-text-editor", { state: "detached" });
+  await page.waitForTimeout(800);
+
+  step("編輯 OCR 辨識出的文字");
   await page.mouse.click(...box.at(150, 128));
   await page.locator(".inline-text-editor").waitFor();
   assert.match(await page.locator(".inline-text-status").textContent(), /OCR/);

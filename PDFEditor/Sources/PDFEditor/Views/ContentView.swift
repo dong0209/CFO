@@ -283,7 +283,7 @@ private struct StatusBar: View {
     private var hint: String {
         switch tools.tool {
         case .select: return "點選註解可拖曳移動、按 Delete 刪除；雙擊文字註解可編輯"
-        case .editText: return "點一下頁面上的文字即可直接修改（原文會被真正取代）；Return 套用、Esc 取消"
+        case .editText: return "點一下文字即可直接修改；掃描檔的 OCR 範圍不對時，拖曳框選要修改的範圍重新辨識；Return 套用、Esc 取消"
         case .highlight, .underline, .strikeout: return "拖曳選取文字即可加上\(tools.tool.title)"
         case .note, .textBox: return "在頁面上點一下以新增\(tools.tool.title)"
         case .ink: return "按住滑鼠拖曳手繪"

@@ -5,7 +5,8 @@ import type { ReplaceResult } from "../engine/pdfEngine";
 import type { AnnotInfo, LinkInfo, MarkupKind, Point, Quad, Rect, ShapeKind, TextBoxStyle, TextLine, WidgetInfo } from "../engine/types";
 import { api, type ResolvedFont } from "../lib/api";
 import { engine } from "../lib/engine";
-import { goToPage, mutate, selectTool } from "../state/actions";
+import { recognizeRegion } from "../lib/ocr";
+import { goToPage, mutate, refresh, selectTool } from "../state/actions";
 import { type DocTab, hexToRgb, rgbToHex, setState, toast, updateTab, useStore } from "../state/store";
 import { downloadableFamilies, describeFont, type FontChoice, fontData, AUTO_FONT, previewFamily, resolveChoice, resolveFallback } from "../lib/fonts";
 import { FontControls, type FontSettings } from "./FontControls";
@@ -23,7 +24,8 @@ type Drag =
   | { kind: "move"; annot: AnnotInfo; start: Point; current: Point }
   | { kind: "text"; start: Point; current: Point; markup: MarkupKind | null }
   | { kind: "ink"; points: Point[] }
-  | { kind: "shape"; shape: ShapeKind; start: Point; current: Point };
+  | { kind: "shape"; shape: ShapeKind; start: Point; current: Point }
+  | { kind: "region"; start: Point; current: Point };
 
 interface Props {
   tab: DocTab;
@@ -145,9 +147,9 @@ export function PageView({ tab, pageIndex, scale }: Props) {
       case "edittext": {
         // 阻止後續的 mousedown 把焦點從剛出現的編輯框移走
         e.preventDefault();
-        // 文字行還在分析中（例如剛切換工具或剛做完 OCR）時直接向引擎查詢
-        const line = linesRevision.current === revision ? textLines.find((l) => rectContains(inflate(l.bbox, 2), p)) : await engine.textLineAt(engineId, pageIndex, p).catch(() => null);
-        setEditingLine(line ?? null);
+        // 點一下：編輯該行；拖曳：框選範圍重新辨識（放開滑鼠時判斷）
+        capture();
+        setDrag({ kind: "region", start: p, current: p });
         return;
       }
       case "select": {
@@ -241,6 +243,7 @@ export function PageView({ tab, pageIndex, scale }: Props) {
     switch (drag.kind) {
       case "move":
       case "shape":
+      case "region":
         setDrag({ ...drag, current: p });
         break;
       case "ink":
@@ -281,6 +284,20 @@ export function PageView({ tab, pageIndex, scale }: Props) {
         }
         return;
       }
+      case "region": {
+        if (Math.hypot(p[0] - current.start[0], p[1] - current.start[1]) * scale < 5) {
+          // 文字行還在分析中（例如剛切換工具或剛做完 OCR）時直接向引擎查詢
+          const line =
+            linesRevision.current === revision
+              ? textLines.find((l) => rectContains(inflate(l.bbox, 2), current.start))
+              : await engine.textLineAt(engineId, pageIndex, current.start).catch(() => null);
+          regionEdit.current = false;
+          setEditingLine(line ?? null);
+        } else {
+          await editRegion(normalizeRect(current.start, p));
+        }
+        return;
+      }
       case "ink":
         if (current.points.length > 1) await mutate("無法加入手繪", () => engine.addInk(engineId, pageIndex, [current.points], rgb, lineWidth));
         return;
@@ -289,6 +306,27 @@ export function PageView({ tab, pageIndex, scale }: Props) {
           await mutate("無法加入圖形", () => engine.addShape(engineId, pageIndex, current.shape, current.start, p, rgb, lineWidth, fillShapes));
         }
     }
+  };
+
+  /** 框選範圍重新辨識：範圍內的 OCR 文字改成新的辨識結果，並直接開啟編輯框。取消編輯時會復原。 */
+  const regionEdit = useRef(false);
+  const editRegion = async (rect: Rect) => {
+    if ((rect[2] - rect[0]) * scale < 8 || (rect[3] - rect[1]) * scale < 6) return;
+    setState({ progress: { title: "正在辨識框選的範圍…", done: 0, total: 1 } });
+    let index: number | null = null;
+    try {
+      const { text, box } = await recognizeRegion(engineId, pageIndex, rect);
+      index = await engine.setOcrRegion(engineId, pageIndex, rect, text, box);
+    } catch (error) {
+      setState({ progress: null });
+      await api().message({ type: "warning", message: "無法重新辨識這個範圍", detail: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+    setState({ progress: null });
+    await refresh(tab.key);
+    const lines = await engine.textLines(engineId, pageIndex);
+    regionEdit.current = true;
+    setEditingLine(lines[index] ?? null);
   };
 
   const onDoubleClick = async (e: React.MouseEvent) => {
@@ -358,6 +396,9 @@ export function PageView({ tab, pageIndex, scale }: Props) {
             <polyline points={drag.points.map(([x, y]) => `${x * scale},${y * scale}`).join(" ")} fill="none" stroke={color} strokeWidth={lineWidth * scale} strokeLinecap="round" strokeLinejoin="round" />
           )}
           {drag?.kind === "shape" && <ShapePreview drag={drag} scale={scale} color={color} lineWidth={lineWidth} fill={fillShapes} />}
+          {drag?.kind === "region" && Math.hypot(drag.current[0] - drag.start[0], drag.current[1] - drag.start[1]) * scale >= 5 && (
+            <rect {...rectAttrs(normalizeRect(drag.start, drag.current), scale)} className="region-select" />
+          )}
         </svg>
         {tool === "select" && widgets.map((w) => <WidgetField key={w.id} widget={w} scale={scale} tab={tab} />)}
         {tool === "edittext" &&
@@ -375,7 +416,16 @@ export function PageView({ tab, pageIndex, scale }: Props) {
               // 編輯框立即關閉，字型在背景準備好後再寫入
               setEditingLine(null);
               const edit = await pending;
-              if (!edit) return;
+              const fromRegion = regionEdit.current;
+              regionEdit.current = false;
+              if (!edit) {
+                // 框選範圍後取消：復原重新辨識
+                if (fromRegion) {
+                  await engine.undo(engineId);
+                  await refresh(tab.key);
+                }
+                return;
+              }
               let result: ReplaceResult | undefined;
               await mutate("無法修改文字", async () => {
                 result = await engine.replaceTextLine(engineId, pageIndex, editingLine.index, edit.text, {
