@@ -352,12 +352,13 @@ final class TextEditEngineTests: XCTestCase {
         let region = CGRect(x: 60, y: 690, width: 120, height: 40)
 
         let recognized = try OCRService.recognizeRegion(of: scanned, rect: region, languages: ["en-US"])
-        XCTAssertTrue(recognized.text.contains("Page"), "Vision 應辨識出框選範圍的文字：\(recognized.text)")
-        if let box = recognized.box {
-            XCTAssertTrue(region.insetBy(dx: -2, dy: -2).contains(box), "文字外框應在框選範圍內：\(box)")
+        XCTAssertTrue(recognized.contains { $0.text.contains("Page") }, "Vision 應辨識出框選範圍的文字：\(recognized)")
+        for line in recognized {
+            XCTAssertTrue(region.insetBy(dx: -2, dy: -2).contains(line.box), "文字外框應在框選範圍內：\(line.box)")
         }
 
-        let prepared = try await PDFEngineBridge.shared.preparingOCRRegion(in: data, password: nil, page: 0, rect: region, text: "Page 1", box: CGRect(x: 72, y: 696, width: 70, height: 24))
+        let prepared = try await PDFEngineBridge.shared.preparingOCRRegion(in: data, password: nil, page: 0, rect: region,
+                                                                            lines: [.init(text: "Page 1", box: CGRect(x: 72, y: 696, width: 70, height: 24))])
         XCTAssertEqual(prepared.line.text, "Page 1")
         XCTAssertTrue(prepared.line.isOCR)
         let edited = try await PDFEngineBridge.shared.replacingTextLine(in: prepared.data, password: nil, page: 0, line: prepared.line.index, with: "Page 9")

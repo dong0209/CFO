@@ -243,20 +243,20 @@ public final class PDFEngineBridge: NSObject {
         return result?["font"] as? String ?? "standard"
     }
 
-    /// 框選範圍重新辨識：範圍內的 OCR 文字改成 `text`（放在 `box`，沒有時用整個範圍），回傳新的文字行。
-    public func setOCRRegion(document id: Int, page: Int, rect: CGRect, text: String, box: CGRect?) async throws -> EditableTextLine {
+    /// 框選範圍重新辨識：範圍內的 OCR 文字改成 `lines`（每行的文字與外框，PDF 使用者座標），回傳最上面一行。
+    public func setOCRRegion(document id: Int, page: Int, rect: CGRect, lines: [OCRService.RegionLine]) async throws -> EditableTextLine {
         func array(_ r: CGRect) -> [Double] { [Double(r.minX), Double(r.minY), Double(r.maxX), Double(r.maxY)] }
-        let boxArgument: Any = box.map(array) ?? NSNull()
-        guard let index = (try await call("setOcrRegionAtUserRect", [id, page, array(rect), text, boxArgument]) as? NSNumber)?.intValue,
-              let lines = try await call("textLines", [id, page]) as? [[String: Any]],
-              lines.indices.contains(index) else { throw PDFEngineError.invalidResponse("setOcrRegion") }
-        return try Self.makeLine(lines[index])
+        let lineArgument: [[String: Any]] = lines.map { ["text": $0.text, "bbox": array($0.box)] }
+        guard let index = (try await call("setOcrRegionAtUserRect", [id, page, array(rect), lineArgument]) as? NSNumber)?.intValue,
+              let all = try await call("textLines", [id, page]) as? [[String: Any]],
+              all.indices.contains(index) else { throw PDFEngineError.invalidResponse("setOcrRegion") }
+        return try Self.makeLine(all[index])
     }
 
     /// 一次完成：框選範圍重新辨識，回傳加入新 OCR 文字後的 PDF 資料、可編輯的文字行與字型候選清單。
-    public func preparingOCRRegion(in data: Data, password: String?, page: Int, rect: CGRect, text: String, box: CGRect?) async throws -> (data: Data, line: EditableTextLine, request: FontRequest) {
+    public func preparingOCRRegion(in data: Data, password: String?, page: Int, rect: CGRect, lines: [OCRService.RegionLine]) async throws -> (data: Data, line: EditableTextLine, request: FontRequest) {
         try await withDocument(data, password: password) { id in
-            let line = try await setOCRRegion(document: id, page: page, rect: rect, text: text, box: box)
+            let line = try await setOCRRegion(document: id, page: page, rect: rect, lines: lines)
             let request = try await fontRequest(document: id, page: page, line: line.index)
             return (try await save(document: id), line, request)
         }

@@ -230,7 +230,7 @@ final class EditorDocument: ObservableObject, Identifiable {
                 // 只辨識框選的小範圍，速度很快，直接在主執行緒處理（PDFPage 不可跨執行緒使用）
                 let recognized = try OCRService.recognizeRegion(of: currentPage, rect: rect, languages: languages)
                 let prepared = try await PDFEngineBridge.shared.preparingOCRRegion(
-                    in: data, password: password, page: pageIndex, rect: rect, text: recognized.text, box: recognized.box
+                    in: data, password: password, page: pageIndex, rect: rect, lines: recognized
                 )
                 workspace.endProgress()
                 pdfView?.showInlineEditor(for: prepared.line, request: prepared.request, on: currentPage) { [weak self] result in

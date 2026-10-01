@@ -1014,6 +1014,11 @@ export class PdfEngine {
       }
 
       if (line.ocr) {
+        const pageBounds = page.getBounds();
+        const pageArea = (pageBounds[2] - pageBounds[0]) * (pageBounds[3] - pageBounds[1]);
+        if ((x1 - x0) * (y1 - y0) > pageArea * 0.15 || y1 - y0 > 120) {
+          throw new Error("這一行的範圍太大（可能是 OCR 把一整塊辨識成一行）。請用拖曳框選範圍重新辨識，一次框選一行或一個區塊。");
+        }
         // 隱形的 OCR 文字整行移除；看得見的字形在掃描影像中，改掉影像中那一行的像素
         const redact = page.createAnnotation("Redact");
         redact.setRect(inflate(line.bbox, 1));
@@ -1155,34 +1160,42 @@ export class PdfEngine {
   }
 
   /**
-   * 使用者框選範圍重新辨識：移除範圍內原本的 OCR 文字，改以 `text`（放在 `textBox`，沒有時用整個範圍）作為一行 OCR 文字，
-   * 回傳這一行的索引，之後即可用 replaceTextLine 修改。範圍內有一般（非 OCR）文字時不處理。
+   * 使用者框選範圍重新辨識：移除範圍內原本的 OCR 文字，改以 `lines`（每行的文字與外框）作為新的 OCR 文字，
+   * 回傳最上面一行的索引，之後即可用 replaceTextLine 修改。沒有辨識出文字時建立一行「?」讓使用者輸入。
+   * 範圍內有一般（非 OCR）文字時不處理。
    */
-  setOcrRegion(id: number, pageIndex: number, rect: Rect, text: string, textBox: Rect | null = null): number {
+  setOcrRegion(id: number, pageIndex: number, rect: Rect, lines: OcrLine[]): number {
     const area = normalizeRect([rect[0], rect[1]], [rect[2], rect[3]]);
-    const inside = (l: TextLine) => rectContains(area, [(l.bbox[0] + l.bbox[2]) / 2, (l.bbox[1] + l.bbox[3]) / 2]);
     if (this.textLines(id, pageIndex).some((l) => !l.ocr && rectsIntersect(inflate(area, -1), l.bbox))) {
       throw new Error("這個範圍內有一般文字（不是掃描影像中的字），請直接點選該行文字修改");
     }
-    const box = textBox ? normalizeRect([textBox[0], textBox[1]], [textBox[2], textBox[3]]) : area;
-    const content = text.replace(/\s+/g, " ").trim() || "?";
+    const valid = lines
+      .map((line) => ({ text: line.text.replace(/\s+/g, " ").trim(), bbox: normalizeRect([line.bbox[0], line.bbox[1]], [line.bbox[2], line.bbox[3]]) }))
+      .filter((line) => line.text && line.bbox[2] - line.bbox[0] > 1 && line.bbox[3] - line.bbox[1] > 1);
+    if (!valid.length) {
+      // 沒有辨識出文字：以範圍上方一行高度（最多 30pt）建立可輸入的一行
+      valid.push({ text: "?", bbox: [area[0], area[1], area[2], Math.min(area[3], area[1] + 30)] });
+    }
+    valid.sort((a, b) => a.bbox[1] - b.bbox[1] || a.bbox[0] - b.bbox[0]);
     this.op(id, "重新辨識範圍", (doc) => {
       const page = this.load(doc, pageIndex);
       const redact = page.createAnnotation("Redact");
       redact.setRect(area);
       redact.update();
       redact.applyRedaction(0, mupdf.PDFPage.REDACT_IMAGE_NONE, mupdf.PDFPage.REDACT_LINE_ART_NONE, mupdf.PDFPage.REDACT_TEXT_REMOVE);
-      this.appendText(doc, page, [this.ocrRun(content, box)], [0, 0, 0], 1, true, "ocr");
+      this.appendText(doc, page, valid.map((line) => this.ocrRun(line.text, line.bbox)), [0, 0, 0], 1, true, "ocr");
     });
-    const index = this.textLines(id, pageIndex).find((l) => l.ocr && inside(l))?.index;
+    const first = valid[0].bbox;
+    const center: Point = [(first[0] + first[2]) / 2, (first[1] + first[3]) / 2];
+    const index = this.textLines(id, pageIndex).find((l) => l.ocr && rectContains(inflate(l.bbox, 1), center))?.index;
     if (index === undefined) throw new Error("無法建立可編輯的文字");
     return index;
   }
 
-  /** 與 setOcrRegion 相同，但範圍以 PDF 使用者座標（原點在左下，macOS PDFKit 使用）表示。 */
-  setOcrRegionAtUserRect(id: number, pageIndex: number, rect: Rect, text: string, textBox: Rect | null = null): number {
+  /** 與 setOcrRegion 相同，但座標以 PDF 使用者座標（原點在左下，macOS PDFKit 使用）表示。 */
+  setOcrRegionAtUserRect(id: number, pageIndex: number, rect: Rect, lines: OcrLine[]): number {
     const m = this.page(id, pageIndex).getTransform() as Matrix;
-    return this.setOcrRegion(id, pageIndex, transformRect(rect, m), text, textBox ? transformRect(textBox, m) : null);
+    return this.setOcrRegion(id, pageIndex, transformRect(rect, m), lines.map((line) => ({ text: line.text, bbox: transformRect(line.bbox, m) })));
   }
 
   /** OCR 文字：字級依外框高度，水平縮放讓寬度與外框相同。 */
@@ -1495,35 +1508,73 @@ function sampleColors(pixmap: mupdf.Pixmap, area: Rect, scale: number): { backgr
   return { background, text: text.every((v) => v < 0.25) ? [0, 0, 0] : text.map((v) => Math.round(v * 100) / 100) as RGB };
 }
 
-/** 把像素區域填成外圍的背景色（每一列依左右兩側的顏色漸變，讓紙張色澤較自然）。 */
+/**
+ * 抹掉像素區域中的文字筆畫：只把與背景色差異明顯的像素（含反鋸齒邊緣）換成同一列左右兩側的背景色，
+ * 其他像素（底色、色塊、圖案）保持原樣；貫穿整個區域的直線（表格格線、底線）也會保留。
+ */
 function fillWithBackground(pixmap: mupdf.Pixmap, [x0, y0, x1, y1]: Rect) {
   const width = pixmap.getWidth();
   const height = pixmap.getHeight();
   const stride = pixmap.getStride();
   const n = pixmap.getNumberOfComponents();
   const pixels = pixmap.getPixels();
-  const ring = Math.max(2, Math.round((y1 - y0) * 0.15));
+  const w = x1 - x0;
+  const h = y1 - y0;
+  if (w <= 0 || h <= 0) return;
+  const ring = Math.max(2, Math.round(h * 0.15));
   const whole = ringColor(pixels, width, height, stride, n, [x0, y0, x1, y1], ring);
-  const band = Math.max(1, Math.floor((y1 - y0) / 4));
-  const side = (x: number, y: number) => ringColor(pixels, width, height, stride, n, [x, Math.max(0, y - band), x + 1, Math.min(height, y + band + 1)], ring);
-  const rows: Array<[number[], number[]]> = [];
-  for (let y = y0; y < y1; y++) {
-    const left = x0 > 0 ? side(x0 - 1 - ring, y) : whole;
-    const right = x1 < width ? side(x1 + ring, y) : whole;
-    // 左右差太多（例如旁邊是圖案）時改用整圈的中位數
-    const far = (c: number[]) => c.some((v, i) => Math.abs(v - whole[i]) > 40);
-    rows.push([far(left) ? whole : left, far(right) ? whole : right]);
-  }
-  // 表格格線、底線等貫穿整個區域的直線要保留，不可一起抹掉
   const rules = ruleLines(pixels, stride, n, [x0, y0, x1, y1], whole);
-  for (let y = y0; y < y1; y++) {
-    if (rules.rows[y - y0]) continue;
-    const [left, right] = rows[y - y0];
-    for (let x = x0; x < x1; x++) {
-      if (rules.cols[x - x0]) continue;
-      const t = x1 - x0 > 1 ? (x - x0) / (x1 - x0 - 1) : 0;
-      const i = y * stride + x * n;
-      for (let c = 0; c < n; c++) pixels[i + c] = Math.round(left[c] * (1 - t) + right[c] * t);
+  const channels = Math.min(3, n);
+  // 文字筆畫：與背景差異明顯的像素，再向外擴張幾個像素以涵蓋反鋸齒與壓縮雜訊
+  const ink = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = (y + y0) * stride + (x + x0) * n;
+      let d = 0;
+      for (let c = 0; c < channels; c++) d += Math.abs(pixels[i + c] - whole[c]);
+      if (d * (3 / channels) > 60) ink[y * w + x] = 1;
+    }
+  }
+  const radius = Math.max(1, Math.round(h * 0.04));
+  const grown = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (!ink[y * w + x]) continue;
+      for (let dy = -radius; dy <= radius; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        for (let dx = -radius; dx <= radius; dx++) {
+          const xx = x + dx;
+          if (xx >= 0 && xx < w) grown[yy * w + xx] = 1;
+        }
+      }
+    }
+  }
+  const color = (x: number, y: number): number[] => {
+    const i = (y + y0) * stride + (x + x0) * n;
+    return Array.from({ length: n }, (_, c) => pixels[i + c]);
+  };
+  const usable = (x: number, y: number) => x >= 0 && x < w && !grown[y * w + x] && !rules.cols[x];
+  // 與背景差太多的取樣點（例如旁邊是圖案）改用整圈的中位數
+  const near = (c: number[]) => (c.some((v, i) => Math.abs(v - whole[i]) > 40) ? whole : c);
+  for (let y = 0; y < h; y++) {
+    if (rules.rows[y]) continue;
+    let x = 0;
+    while (x < w) {
+      if (!grown[y * w + x] || rules.cols[x]) {
+        x++;
+        continue;
+      }
+      let end = x;
+      while (end < w && grown[y * w + end] && !rules.cols[end]) end++;
+      const left = usable(x - 1, y) ? near(color(x - 1, y)) : whole;
+      const right = usable(end, y) ? near(color(end, y)) : whole;
+      for (let xx = x; xx < end; xx++) {
+        const t = end - x > 1 ? (xx - x) / (end - x - 1) : 0;
+        const i = (y + y0) * stride + (xx + x0) * n;
+        for (let c = 0; c < n; c++) pixels[i + c] = Math.round(left[c] * (1 - t) + right[c] * t);
+      }
+      x = end;
     }
   }
 }

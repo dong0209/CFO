@@ -51,10 +51,10 @@ function createOcrWorker(language: OcrLanguage) {
 let regionWorker: { language: OcrLanguage; worker: ReturnType<typeof createOcrWorker> } | null = null;
 
 /**
- * 重新辨識頁面上框選的範圍（頁面座標）：回傳辨識出的文字（多行以空白連接）與文字實際所在的外框。
+ * 重新辨識頁面上框選的範圍（頁面座標）：回傳每一行的文字與外框（頁面座標）。
  * 辨識引擎載入後會保留，下次框選時不必重新載入。
  */
-export async function recognizeRegion(engineId: number, pageIndex: number, rect: Rect): Promise<{ text: string; box: Rect | null }> {
+export async function recognizeRegion(engineId: number, pageIndex: number, rect: Rect): Promise<OcrLine[]> {
   const language = lastOcrLanguage();
   if (regionWorker?.language !== language) {
     const previous = regionWorker;
@@ -73,20 +73,17 @@ export async function recognizeRegion(engineId: number, pageIndex: number, rect:
   const k = 72 / DPI;
   const x0 = Math.min(rect[0], rect[2]);
   const y0 = Math.min(rect[1], rect[3]);
-  const texts: string[] = [];
-  let box: Rect | null = null;
+  const lines: OcrLine[] = [];
   for (const block of data.blocks ?? []) {
     for (const paragraph of block.paragraphs) {
       for (const line of paragraph.lines) {
         const text = cleanOcrText(line.text);
         if (!text || line.confidence < 10) continue;
-        texts.push(text);
-        const b: Rect = [x0 + line.bbox.x0 * k, y0 + line.bbox.y0 * k, x0 + line.bbox.x1 * k, y0 + line.bbox.y1 * k];
-        box = box ? [Math.min(box[0], b[0]), Math.min(box[1], b[1]), Math.max(box[2], b[2]), Math.max(box[3], b[3])] : b;
+        lines.push({ text, bbox: [x0 + line.bbox.x0 * k, y0 + line.bbox.y0 * k, x0 + line.bbox.x1 * k, y0 + line.bbox.y1 * k] });
       }
     }
   }
-  return { text: cleanOcrText(texts.join(" ")), box };
+  return lines;
 }
 
 /** 語言資料與辨識核心都隨程式安裝，離線即可使用。 */

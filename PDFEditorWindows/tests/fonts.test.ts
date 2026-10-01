@@ -2,7 +2,7 @@ import * as mupdf from "mupdf";
 import { beforeEach, describe, expect, it } from "vitest";
 import { chosenFontRequest, cleanFontName, fontRequestFor, fontUrlFromCss, googleFontsCssUrl, isReliableText, ocrFontRequest, parseFontName } from "../src/engine/fonts";
 import { PdfEngine } from "../src/engine/pdfEngine";
-import { builtinFontBytes, makeEmbeddedFontPdf, makePdf, makeRenamedFontPdf, makeScannedPdf, makeScannedTablePdf, makeStyledPdf, regionColor } from "./helpers";
+import { builtinFontBytes, makeEmbeddedFontPdf, makePdf, makeRenamedFontPdf, makeScannedBlockPdf, makeScannedPdf, makeScannedTablePdf, makeStyledPdf, regionColor } from "./helpers";
 
 describe("字型名稱辨識", () => {
   it("解析字族、粗細與斜體", () => {
@@ -261,7 +261,7 @@ describe("編輯文字時的字型", () => {
     const image = new mupdf.Image(png);
     expect([image.getWidth(), image.getHeight()]).toEqual([350, 90]);
 
-    const index = engine.setOcrRegion(id, 0, [70, 110, 245, 155], "Left cell", [78, 118, 168, 148]);
+    const index = engine.setOcrRegion(id, 0, [70, 110, 245, 155], [{ text: "Left cell", bbox: [78, 118, 168, 148] }]);
     const lines = engine.textLines(id, 0);
     expect(lines[index]).toMatchObject({ text: "Left cell", ocr: true });
     engine.replaceTextLine(id, 0, index, "Changed");
@@ -274,7 +274,35 @@ describe("編輯文字時的字型", () => {
     expect(text).not.toContain("Left cell");
     // 範圍內有一般文字時拒絕
     const normal = engine.open(makePdf(1)).id;
-    expect(() => engine.setOcrRegion(normal, 0, [60, 70, 250, 110], "x")).toThrow(/一般文字/);
+    expect(() => engine.setOcrRegion(normal, 0, [60, 70, 250, 110], [])).toThrow(/一般文字/);
+  });
+
+  it("框選多行：分成多行，編輯一行只抹掉該行的字，色塊與圖案保持原樣", () => {
+    const { id } = engine.open(makeScannedBlockPdf());
+    const lines = [0, 1, 2].map((i) => ({ text: `Line ${i} text`, bbox: [78, 125 + i * 22, 230, 145 + i * 22] as [number, number, number, number] }));
+    const index = engine.setOcrRegion(id, 0, [70, 115, 420, 200], lines);
+    const all = engine.textLines(id, 0).filter((l) => l.ocr);
+    expect(all.map((l) => l.text)).toEqual(["Line 0 text", "Line 1 text", "Line 2 text"]);
+    expect(all[0].index).toBe(index);
+    expect(all[0].bbox[3] - all[0].bbox[1]).toBeLessThan(30);
+    engine.replaceTextLine(id, 0, index, "");
+    const saved = engine.save(id);
+    // 第一行的字被抹掉，變回淺藍底色
+    const erased = regionColor(saved, [80, 128, 225, 142]);
+    expect(erased[2]).toBeGreaterThan(240);
+    expect(erased[0]).toBeGreaterThan(190);
+    // 第二行仍在
+    expect(regionColor(saved, [80, 150, 225, 164])[0]).toBeLessThan(190);
+    // 同一範圍內的橘色方塊保持原樣
+    const box = regionColor(saved, [302, 127, 338, 143]);
+    expect(box[0]).toBeGreaterThan(220);
+    expect(box[2]).toBeLessThan(80);
+  });
+
+  it("範圍過大的 OCR 行拒絕修改，避免抹掉整塊內容", () => {
+    const { id } = engine.open(makeScannedBlockPdf());
+    engine.applyOcr(id, 0, [{ text: "Whole block", bbox: [70, 115, 420, 260] }]);
+    expect(() => engine.replaceTextLine(id, 0, 0, "x")).toThrow(/範圍太大/);
   });
 
   it("提供字型建議清單", () => {

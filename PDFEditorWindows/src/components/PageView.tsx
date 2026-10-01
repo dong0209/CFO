@@ -315,8 +315,9 @@ export function PageView({ tab, pageIndex, scale }: Props) {
     setState({ progress: { title: "正在辨識框選的範圍…", done: 0, total: 1 } });
     let index: number | null = null;
     try {
-      const { text, box } = await recognizeRegion(engineId, pageIndex, rect);
-      index = await engine.setOcrRegion(engineId, pageIndex, rect, text, box);
+      const lines = await recognizeRegion(engineId, pageIndex, rect);
+      index = await engine.setOcrRegion(engineId, pageIndex, rect, lines);
+      if (lines.length > 1) toast(`框選範圍辨識出 ${lines.length} 行，已分成 ${lines.length} 行；其他行可直接點選修改`);
     } catch (error) {
       setState({ progress: null });
       await api().message({ type: "warning", message: "無法重新辨識這個範圍", detail: error instanceof Error ? error.message : String(error) });

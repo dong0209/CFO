@@ -123,3 +123,17 @@ export function makeScannedTablePdf(): Uint8Array {
   doc.insertPage(0, doc.addPage([0, 0, 595, 842], 0, { XObject: { Im0: image } }, "q 595 0 0 842 0 0 cm /Im0 Do Q"));
   return doc.saveToBuffer("compress").asUint8Array().slice();
 }
+
+/** 模擬掃描的段落：淺藍底色上三行文字，右側有一個橘色方塊（在同一個框選範圍內）。 */
+export function makeScannedBlockPdf(): Uint8Array {
+  const source = new mupdf.PDFDocument();
+  const font = source.addSimpleFont(new mupdf.Font("Helvetica"));
+  const text = [0, 1, 2].map((i) => `BT /F1 14 Tf 80 ${700 - i * 22} Td (Line ${i} text) Tj ET`).join(" ");
+  const content = `0.8 0.9 1 rg 0 0 595 842 re f 1 0.6 0.1 rg 300 697 40 20 re f 0 g ${text}`;
+  source.insertPage(0, source.addPage([0, 0, 595, 842], 0, { Font: { F1: font } }, content));
+  const pixmap = source.loadPage(0).toPixmap(mupdf.Matrix.scale(2, 2), mupdf.ColorSpace.DeviceRGB, false);
+  const doc = new mupdf.PDFDocument();
+  const image = doc.addImage(new mupdf.Image(pixmap));
+  doc.insertPage(0, doc.addPage([0, 0, 595, 842], 0, { XObject: { Im0: image } }, "q 595 0 0 842 0 0 cm /Im0 Do Q"));
+  return doc.saveToBuffer("compress").asUint8Array().slice();
+}
