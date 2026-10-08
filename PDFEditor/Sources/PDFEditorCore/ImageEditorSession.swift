@@ -54,7 +54,7 @@ public final class ImageEditorSession: NSObject {
         keepAlive = self
         webView.load(URLRequest(url: URL(string: "\(EngineSchemeHandler.scheme)://editor/index.html")!))
         if let parent {
-            parent.beginSheet(window)
+            parent.beginSheet(window, completionHandler: nil)
         } else {
             window.center()
             window.makeKeyAndOrderFront(nil)
