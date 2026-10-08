@@ -44,6 +44,7 @@ const PATHS: Record<string, string> = {
   merge: "M6 3v6a6 6 0 0 0 6 6h0a6 6 0 0 1 6 6M18 3v6a6 6 0 0 1-6 6M12 15v6",
   lock: "M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4",
   watermark: "M12 3c3 4 6 7 6 11a6 6 0 0 1-12 0c0-4 3-7 6-11z",
+  "image-edit": "M4 5h11M4 5v14h16v-6M4 16l5-5 4 4M19 3l2 2-7 7h-2v-2z",
   hash: "M9 4 7 20M17 4l-2 16M4 9h16M3 15h16",
   ocr: "M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4M8 9h8M8 12h8M8 15h5",
   flatten: "M4 8l8-4 8 4-8 4zM4 12l8 4 8-4M4 16l8 4 8-4",

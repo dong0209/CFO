@@ -7,6 +7,7 @@ import { type DocTab, type Tool, setState, useStore } from "../state/store";
 import { api } from "../lib/api";
 import { Icon } from "./Icon";
 import { openDialog } from "./dialogs/openDialog";
+import { openImageEditor } from "./dialogs/ImageEditorDialog";
 
 // MARK: - 分頁列
 
@@ -115,6 +116,7 @@ export function Toolbar({ tab }: { tab: DocTab }) {
         <button title="向左旋轉頁面 (Ctrl+Shift+R)" onClick={() => rotatePages(targetPages(tab), -90)}><Icon name="rotate-left" /></button>
         <button title="向右旋轉頁面 (Ctrl+R)" onClick={() => rotatePages(targetPages(tab), 90)}><Icon name="rotate-right" /></button>
         <span className="divider" />
+        <button title="影像編輯此頁 (Ctrl+E)：像編輯圖片一樣塗改、框選搬移、加文字" onClick={() => openImageEditor()}><Icon name="image-edit" /></button>
         <button title="浮水印" onClick={() => openDialog("watermark")}><Icon name="watermark" /></button>
         <button title="頁碼與頁首頁尾" onClick={() => openDialog("page-numbers")}><Icon name="hash" /></button>
         <button title="文字辨識（OCR）" onClick={() => openDialog("ocr")}><Icon name="ocr" /></button>

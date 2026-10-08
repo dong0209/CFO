@@ -10,6 +10,7 @@ import { hasOpenModal, ModalHost } from "./components/Modal";
 import { Sidebar } from "./components/Sidebar";
 import { Viewer } from "./components/Viewer";
 import { openDialog } from "./components/dialogs/openDialog";
+import { openImageEditor } from "./components/dialogs/ImageEditorDialog";
 
 registerCommands({
   "export-images": () => openDialog("export-images"),
@@ -19,6 +20,7 @@ registerCommands({
   "page-numbers": () => openDialog("page-numbers"),
   signatures: () => openDialog("signatures"),
   ocr: () => openDialog("ocr"),
+  "image-edit": () => openImageEditor(),
   shortcuts: () => openDialog("shortcuts"),
   about: () => openDialog("about"),
 });

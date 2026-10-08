@@ -115,6 +115,8 @@ function buildMenu({ send, recent, openRecent }) {
       submenu: [
         ...TOOLS.map(([id, label, key]) => item(key ? `${label}\t${key}` : label, `tool:${id}`)),
         { type: "separator" },
+        item("影像編輯此頁…", "image-edit", "CmdOrCtrl+E"),
+        { type: "separator" },
         item("簽名…", "signatures"),
         item("浮水印…", "watermark"),
         item("頁碼與頁首頁尾…", "page-numbers"),

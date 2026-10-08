@@ -375,7 +375,60 @@ try {
     assert.ok(embedded.length > 0, "寫入的文字必須內嵌字型");
     if (!offline) assert.ok(embedded.some((name) => /Roboto/i.test(name)), "Roboto 應內嵌在存出的 PDF 中");
   }
+
+  step("影像編輯模式：框選刪除、加入文字與圖形");
+  await menu("image-edit");
+  await page.locator(".ie-root").waitFor();
+  await page.waitForSelector(".ie-loading", { state: "detached", timeout: 30000 });
+  await page.waitForTimeout(300);
+  const editorBox = await page.locator(".ie-overlay").boundingBox();
+  const ie = (x, y) => [editorBox.x + (x * editorBox.width) / 595, editorBox.y + (y * editorBox.width) / 595];
+  // 框選標題後按 Delete（填背景色）
+  await page.keyboard.press("m");
+  await drag(ie(60, 70), ie(470, 118));
+  await page.keyboard.press("Delete");
+  // 畫矩形
+  await page.keyboard.press("r");
+  await drag(ie(100, 300), ie(250, 380));
+  // 加入文字
+  await page.keyboard.press("t");
+  await page.mouse.click(...ie(100, 200));
+  const textarea = page.locator(".ie-textarea");
+  await textarea.waitFor();
+  await textarea.fill("影像編輯測試 Image Edit");
+  await textarea.evaluate((el) => el.blur());
+  assert.ok((await page.locator(".ie-panel select option").count()) > 10, "文字應有字型選單");
+  await page.waitForTimeout(300);
+  await shot("11-影像編輯");
+  // 復原與重做
+  await page.locator(".ie-top button", { hasText: "復原" }).click();
+  await page.locator(".ie-top button", { hasText: "重做" }).click();
+  await page.locator(".ie-top .ie-primary").click();
+  await page.waitForSelector(".ie-root", { state: "detached", timeout: 90000 });
+  await page.waitForSelector('.toast:has-text("已套用影像編輯")', { timeout: 30000 });
+  const imageEdited = join(work, "影像編輯.pdf");
+  await mockSave(imageEdited);
+  await menu("save-as");
+  await page.waitForFunction(() => [...document.querySelectorAll(".tab.active .tab-name")].some((t) => t.textContent === "影像編輯.pdf"), null, { timeout: 10000 });
+  {
+    const doc = openPdf(imageEdited);
+    const pdfPage = doc.loadPage(0);
+    const text = pdfPage.toStructuredText("").asText();
+    assert.ok(text.includes("影像編輯測試 Image Edit"), `影像編輯加入的文字應可搜尋：${JSON.stringify(text)}`);
+    assert.ok(!text.includes("Annual Report"), "像素修改後整頁換成影像，原本的文字層不應殘留");
+    const xobjects = pdfPage.getObject().getInheritable("Resources").resolve().get("XObject");
+    assert.ok(xobjects.get("PEBG").isStream(), "整頁應換成編輯後的影像");
+    // 原本標題的位置已被抹掉（白色）
+    const pixmap = pdfPage.toPixmap(mupdf.Matrix.identity, mupdf.ColorSpace.DeviceRGB, false, false);
+    const pixels = pixmap.getPixels();
+    let dark = 0;
+    for (let y = 80; y < 110; y++) for (let x = 72; x < 400; x++) if (pixels[(y * pixmap.getWidth() + x) * 3] < 128) dark++;
+    assert.ok(dark < 20, `框選刪除的區域應為空白（深色像素 ${dark}）`);
+  }
+  // 存檔完成後再關閉分頁
+  await page.waitForTimeout(800);
   await menu("close-tab");
+  await page.waitForFunction(() => document.querySelectorAll(".tab").length === 1, null, { timeout: 10000 });
 
   step("關閉全部分頁後回到歡迎畫面");
   await menu("close-tab");

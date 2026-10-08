@@ -589,7 +589,11 @@ const commandHandlers: Record<string, Handler> = {
 };
 
 export async function runCommand(command: string) {
-  if (hasOpenModal()) return;
+  if (hasOpenModal()) {
+    // 對話框（例如影像編輯）開啟時，把選單指令交給對話框處理
+    window.dispatchEvent(new CustomEvent("app-command", { detail: command }));
+    return;
+  }
   if (command.startsWith("tool:")) {
     selectTool(command.slice(5) as Tool);
     return;
