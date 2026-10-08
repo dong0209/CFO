@@ -1,0 +1,84 @@
+name: PDF 編輯器（Windows）
+
+on:
+  push:
+    paths:
+      - "PDFEditorWindows/**"
+      - ".github/workflows/pdf-editor-windows.yml"
+  pull_request:
+    paths:
+      - "PDFEditorWindows/**"
+      - ".github/workflows/pdf-editor-windows.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: PDFEditorWindows
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: PDFEditorWindows/package-lock.json
+
+      - name: 安裝套件
+        run: npm ci
+
+      - name: 型別檢查
+        run: npm run typecheck
+
+      - name: 單元測試
+        run: npm test
+
+      - name: 建置
+        run: npm run build
+
+      - name: 端對端測試（實際啟動 App）
+        run: npm run e2e
+
+      - name: 打包安裝檔（x64、ARM64）與免安裝版
+        run: |
+          npx electron-builder --win nsis --x64 --publish never
+          npx electron-builder --win nsis --arm64 --publish never
+          npx electron-builder --win portable --x64 --publish never
+          Get-ChildItem release -Filter *.exe | Format-Table Name, @{n="MB";e={[math]::Round($_.Length / 1MB, 1)}}
+        shell: pwsh
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: 上傳 x64 安裝檔
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDFEditor-Windows-x64-安裝檔
+          path: PDFEditorWindows/release/PDFEditor-Setup-*-x64.exe
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: 上傳 ARM64 安裝檔
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDFEditor-Windows-ARM64-安裝檔
+          path: PDFEditorWindows/release/PDFEditor-Setup-*-arm64.exe
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: 上傳免安裝版
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDFEditor-Windows-免安裝版
+          path: PDFEditorWindows/release/PDFEditor-Portable-*.exe
+          if-no-files-found: error
+          compression-level: 0
+
+      - name: 上傳測試截圖
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: PDFEditorWindows/e2e/screenshots
+          if-no-files-found: ignore
