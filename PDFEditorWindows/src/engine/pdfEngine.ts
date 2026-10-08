@@ -5,6 +5,7 @@ import { chunk, moveItems, renderPageNumber } from "./pageRanges";
 import type {
   AnnotInfo, DocInfo, ImageFormat, LinkInfo, MarkupKind, Matrix, OcrLine, OpenResult, OutlineNode,
   PageInfo, PageNumberOptions, Point, Quad, Rect, RenderResult, RGB, SaveOptions, SearchHit, ShapeKind,
+  EditorPageImage, FontData, ImageEditObject, ImageEditResult,
   TextBoxStyle, TextLine, TextSelection, WatermarkOptions, WidgetInfo, WidgetKind,
 } from "./types";
 
@@ -651,7 +652,7 @@ export class PdfEngine {
         if (!contents.isArray()) continue;
         for (let k = contents.length - 1; k >= 0; k--) {
           const role = contents.get(k).get(STAMP_KEY);
-          if (role.isName() && role.asName() !== "ocr" && role.asName() !== "edit") {
+          if (role.isName() && ["watermark", "pagenumber"].includes(role.asName())) {
             contents.delete(k);
             removed++;
           }
@@ -1142,6 +1143,156 @@ export class PdfEngine {
     else pageObj.put("Contents", [contents, stream]);
   }
 
+  // MARK: - 影像編輯模式
+
+  /** 影像編輯模式的整頁影像（不含註解）。座標原點在頁面左上角。 */
+  editorImage(id: number, pageIndex: number, dpi = 200): EditorPageImage {
+    const page = this.page(id, pageIndex);
+    const [x0, y0, x1, y1] = page.getBounds() as Rect;
+    // 影像最多約 1600 萬像素，避免超大頁面耗盡記憶體
+    const maxScale = Math.sqrt(16_000_000 / Math.max(1, (x1 - x0) * (y1 - y0)));
+    const scale = Math.min(dpi / 72, maxScale);
+    return { png: this.regionImage(id, pageIndex, [x0, y0, x1, y1], scale * 72), width: x1 - x0, height: y1 - y0, dpi: scale * 72 };
+  }
+
+  /**
+   * 套用影像編輯模式的結果：
+   * - `background` 有值時，整頁換成這張影像（頁面大小改為 width × height、不旋轉）；裁切或旋轉造成頁面大小改變時移除本頁註解。
+   * - 文字（內嵌字型，可搜尋）、圖形與圖片以向量方式寫在頁面最上層。
+   */
+  applyImageEdit(id: number, pageIndex: number, edit: ImageEditResult): void {
+    this.op(id, "影像編輯", (doc) => {
+      const page = this.load(doc, pageIndex);
+      const pageObj = page.getObject();
+      let [ox, oy, ox1, oy1] = page.getBounds() as Rect;
+      if (edit.background) {
+        const sameSize = Math.abs(ox1 - ox - edit.width) < 0.5 && Math.abs(oy1 - oy - edit.height) < 0.5 && normalizeRotation(page.getObject().getInheritable("Rotate").isNumber() ? page.getObject().getInheritable("Rotate").asNumber() : 0) === 0;
+        if (!sameSize) {
+          for (const annot of page.getAnnotations()) page.deleteAnnotation(annot);
+        } else if (ox !== 0 || oy !== 0) {
+          // 頁面原點不在 (0,0) 時，平移註解到新的頁面座標
+          for (const annot of page.getAnnotations()) {
+            const [a, b, c, d] = annot.getRect();
+            annot.setRect([a - ox, b - oy, c - ox, d - oy]);
+          }
+        }
+        const image = doc.addImage(new mupdf.Image(edit.background));
+        for (const key of ["CropBox", "TrimBox", "BleedBox", "ArtBox", "Rotate", "Group"]) pageObj.delete(key);
+        pageObj.put("MediaBox", [0, 0, edit.width, edit.height]);
+        pageObj.put("Rotate", 0);
+        pageObj.put("Resources", { XObject: { PEBG: image } });
+        pageObj.put("Contents", doc.addStream(`q ${fmt(edit.width)} 0 0 ${fmt(edit.height)} 0 0 cm /PEBG Do Q`, {}));
+        [ox, oy] = [0, 0];
+      }
+      this.writeEditObjects(doc, page, edit.objects, ox, oy);
+    });
+  }
+
+  private writeEditObjects(doc: mupdf.PDFDocument, page: mupdf.PDFPage, objects: ImageEditObject[], ox: number, oy: number) {
+    if (!objects.length) return;
+    const pageObj = page.getObject();
+    const resources = ensureDict(doc, pageObj, "Resources", true);
+    const toUser = invert(page.getTransform() as Matrix);
+    // 編輯器座標（頁面左上角為原點）→ 頁面座標
+    const shift: Matrix = [1, 0, 0, 1, ox, oy];
+    const vectorOps: string[] = [];
+    const flush = () => {
+      if (!vectorOps.length) return;
+      wrapContents(doc, pageObj);
+      const stream = doc.addStream(`q ${concat(shift, toUser).map(fmt).join(" ")} cm\n${vectorOps.join("\n")}\nQ`, { [STAMP_KEY]: doc.newName("imageedit") });
+      const contents = pageObj.get("Contents");
+      if (contents.isArray()) contents.push(stream);
+      else pageObj.put("Contents", [contents, stream]);
+      vectorOps.length = 0;
+    };
+    const gs = (opacity: number) => {
+      const states = ensureDict(doc, resources, "ExtGState");
+      const name = `PEGS${Math.round(Math.max(0, Math.min(1, opacity)) * 100)}`;
+      if (states.get(name).isNull()) states.put(name, { Type: doc.newName("ExtGState"), ca: opacity, CA: opacity });
+      return `/${name} gs`;
+    };
+    const color = (c: RGB) => c.map(fmt).join(" ");
+    const rotationAbout = (x: number, y: number, w: number, h: number, degrees: number): string => {
+      if (!degrees) return "";
+      const r = (degrees * Math.PI) / 180;
+      const cx = x + w / 2;
+      const cy = y + h / 2;
+      const m = concat(concat([1, 0, 0, 1, -cx, -cy], [Math.cos(r), Math.sin(r), -Math.sin(r), Math.cos(r), 0, 0]), [1, 0, 0, 1, cx, cy]);
+      return `${m.map(fmt).join(" ")} cm`;
+    };
+
+    for (const obj of objects) {
+      switch (obj.type) {
+        case "rect":
+        case "ellipse": {
+          if (!obj.stroke && !obj.fill) break;
+          const path = obj.type === "rect" ? `${fmt(obj.x)} ${fmt(obj.y)} ${fmt(obj.w)} ${fmt(obj.h)} re` : ellipsePath(obj.x, obj.y, obj.w, obj.h);
+          const paint = obj.fill && obj.stroke && obj.strokeWidth > 0 ? "B" : obj.fill ? "f" : "S";
+          vectorOps.push(
+            `q ${gs(obj.opacity)} ${rotationAbout(obj.x, obj.y, obj.w, obj.h, obj.rotation)} ${obj.stroke ? `${color(obj.stroke)} RG ${fmt(obj.strokeWidth)} w` : ""} ${obj.fill ? `${color(obj.fill)} rg` : ""} ${path} ${paint} Q`,
+          );
+          break;
+        }
+        case "line":
+        case "arrow": {
+          const ops = [`q ${gs(obj.opacity)} ${color(obj.stroke)} RG ${color(obj.stroke)} rg ${fmt(obj.strokeWidth)} w 1 J 1 j`];
+          let [ex, ey] = [obj.x2, obj.y2];
+          if (obj.type === "arrow") {
+            const angle = Math.atan2(obj.y2 - obj.y1, obj.x2 - obj.x1);
+            const head = Math.max(8, obj.strokeWidth * 4);
+            const left: Point = [obj.x2 - head * Math.cos(angle - Math.PI / 7), obj.y2 - head * Math.sin(angle - Math.PI / 7)];
+            const right: Point = [obj.x2 - head * Math.cos(angle + Math.PI / 7), obj.y2 - head * Math.sin(angle + Math.PI / 7)];
+            // 線段停在箭頭底部，避免粗線凸出箭頭尖端
+            ex = obj.x2 - head * 0.8 * Math.cos(angle);
+            ey = obj.y2 - head * 0.8 * Math.sin(angle);
+            ops.push(`${fmt(obj.x1)} ${fmt(obj.y1)} m ${fmt(ex)} ${fmt(ey)} l S`);
+            ops.push(`${fmt(obj.x2)} ${fmt(obj.y2)} m ${fmt(left[0])} ${fmt(left[1])} l ${fmt(right[0])} ${fmt(right[1])} l h f`);
+          } else {
+            ops.push(`${fmt(obj.x1)} ${fmt(obj.y1)} m ${fmt(ex)} ${fmt(ey)} l S`);
+          }
+          ops.push("Q");
+          vectorOps.push(ops.join(" "));
+          break;
+        }
+        case "image": {
+          const xobjects = ensureDict(doc, resources, "XObject");
+          const ref = doc.addImage(new mupdf.Image(obj.data));
+          const name = `PEI${ref.asIndirect()}`;
+          xobjects.put(name, ref);
+          vectorOps.push(
+            `q ${gs(obj.opacity)} ${rotationAbout(obj.x, obj.y, obj.w, obj.h, obj.rotation)} ${fmt(obj.w)} 0 0 ${fmt(-obj.h)} ${fmt(obj.x)} ${fmt(obj.y + obj.h)} cm /${name} Do Q`,
+          );
+          break;
+        }
+        case "text": {
+          // 文字寫入前先輸出之前累積的圖形，維持上下順序
+          flush();
+          this.writeEditText(doc, page, obj, ox, oy);
+          break;
+        }
+      }
+    }
+    flush();
+  }
+
+  /** 影像編輯模式的文字：每一行依對齊方式放在外框內，以外框中心旋轉；字型一律內嵌。 */
+  private writeEditText(doc: mupdf.PDFDocument, page: mupdf.PDFPage, obj: Extract<ImageEditObject, { type: "text" }>, ox: number, oy: number) {
+    const primary = [obj.font, obj.fallbackFont].map((f, i) => (f ? loadFont(i === 0 ? "EditText" : "Fallback", f.data, f.index ?? 0) : null)).filter((f): f is mupdf.Font => f !== null);
+    const chain = this.fontChain({ bold: obj.bold, italic: obj.italic, serif: false, mono: false }, primary);
+    const r = (obj.rotation * Math.PI) / 180;
+    const cx = obj.x + obj.w / 2;
+    const cy = obj.y + obj.h / 2;
+    const rotate = ([px, py]: Point): Point => [cx + (px - cx) * Math.cos(r) - (py - cy) * Math.sin(r), cy + (px - cx) * Math.sin(r) + (py - cy) * Math.cos(r)];
+    const runs = obj.text.split("\n").flatMap((line, i) => {
+      if (!line) return [];
+      const width = this.glyphRuns(line, chain).reduce((sum, run) => sum + run.width, 0) * obj.size;
+      const dx = obj.align === "center" ? (obj.w - width) / 2 : obj.align === "right" ? obj.w - width : 0;
+      const origin = rotate([obj.x + dx, obj.y + obj.size * (EDIT_ASCENT + i * EDIT_LINE_HEIGHT)]);
+      return [{ text: line, matrix: textMatrix([origin[0] + ox, origin[1] + oy], obj.size, -obj.rotation) }];
+    });
+    if (runs.length) this.appendText(doc, page, runs, obj.color, obj.opacity, false, "imageedit", chain);
+  }
+
   /** 頁面某區域（頁面座標）的 PNG 影像（不含註解），用來重新辨識文字。 */
   regionImage(id: number, pageIndex: number, rect: Rect, dpi = 300): Uint8Array {
     const page = this.page(id, pageIndex);
@@ -1295,7 +1446,15 @@ export class PdfEngine {
     } else {
       flags.push("encrypt=none");
     }
-    return doc.saveToBuffer(flags.join(",")).asUint8Array().slice();
+    // 存檔時的垃圾回收（garbage）會在記憶體中重新編號物件，使復原紀錄失效。
+    // 因此先輸出一份不做垃圾回收的副本，再對副本清理、壓縮與加密，正在編輯的文件保持不變。
+    const entry = this.entry(id);
+    const copy = mupdf.Document.openDocument(doc.saveToBuffer("").asUint8Array().slice(), "application/pdf").asPDF();
+    if (!copy) throw new Error("無法儲存文件");
+    if (copy.needsPassword() && !copy.authenticatePassword(entry.password ?? "")) throw new Error("無法儲存受密碼保護的文件");
+    const output = copy.saveToBuffer(flags.join(",")).asUint8Array().slice();
+    copy.destroy();
+    return output;
   }
 
   exportPageImage(id: number, pageIndex: number, dpi: number, format: ImageFormat, quality = 90): Uint8Array {
@@ -1349,13 +1508,30 @@ export interface ReplaceOptions {
   forceFont?: boolean;
 }
 
-export interface FontData {
-  data: Uint8Array;
-  /** 字型集合（.ttc）中的第幾個字型 */
-  index?: number;
-}
+export type { FontData };
 
 type AnalyzedLine = TextLine & { dict: mupdf.PDFObject | null };
+
+/** 影像編輯模式文字的基線位置與行高（字級的倍數），與編輯器的預覽一致。 */
+export const EDIT_ASCENT = 0.88;
+export const EDIT_LINE_HEIGHT = 1.25;
+
+/** 以四段貝茲曲線近似橢圓。 */
+function ellipsePath(x: number, y: number, w: number, h: number): string {
+  const k = 0.5522847498;
+  const rx = w / 2;
+  const ry = h / 2;
+  const cx = x + rx;
+  const cy = y + ry;
+  const p = (a: number, b: number) => `${fmt(a)} ${fmt(b)}`;
+  return [
+    `${p(cx + rx, cy)} m`,
+    `${p(cx + rx, cy + ry * k)} ${p(cx + rx * k, cy + ry)} ${p(cx, cy + ry)} c`,
+    `${p(cx - rx * k, cy + ry)} ${p(cx - rx, cy + ry * k)} ${p(cx - rx, cy)} c`,
+    `${p(cx - rx, cy - ry * k)} ${p(cx - rx * k, cy - ry)} ${p(cx, cy - ry)} c`,
+    `${p(cx + rx * k, cy - ry)} ${p(cx + rx, cy - ry * k)} ${p(cx + rx, cy)} c h`,
+  ].join(" ");
+}
 
 /** 取樣顏色時的渲染倍率。 */
 const SAMPLE_SCALE = 2;

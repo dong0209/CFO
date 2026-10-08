@@ -163,3 +163,89 @@ export interface TextLine {
   /** OCR 辨識出的隱形文字（看得見的字形在掃描影像中） */
   ocr: boolean;
 }
+
+// MARK: - 影像編輯模式
+
+export interface FontData {
+  data: Uint8Array;
+  /** 字型集合（.ttc）中的第幾個字型 */
+  index?: number;
+}
+
+/** 影像編輯模式的物件（頁面座標，y 向下，原點在頁面左上角；rotation 為順時針角度，以外框中心旋轉）。 */
+export interface ImageEditText {
+  type: "text";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rotation: number;
+  text: string;
+  size: number;
+  color: RGB;
+  bold: boolean;
+  italic: boolean;
+  align: "left" | "center" | "right";
+  opacity: number;
+  /** 顯示用的字族名稱 */
+  family?: string;
+  /** 寫入時使用的字型檔（由主程式依字族找到後填入） */
+  font?: FontData | null;
+  fallbackFont?: FontData | null;
+}
+
+export interface ImageEditShape {
+  type: "rect" | "ellipse";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rotation: number;
+  stroke: RGB | null;
+  fill: RGB | null;
+  strokeWidth: number;
+  opacity: number;
+}
+
+export interface ImageEditLine {
+  type: "line" | "arrow";
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  stroke: RGB;
+  strokeWidth: number;
+  opacity: number;
+}
+
+export interface ImageEditImage {
+  type: "image";
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rotation: number;
+  /** PNG 或 JPEG */
+  data: Uint8Array;
+  opacity: number;
+}
+
+export type ImageEditObject = ImageEditText | ImageEditShape | ImageEditLine | ImageEditImage;
+
+export interface ImageEditResult {
+  /** 編輯後的頁面大小（點）；裁切或旋轉後會改變 */
+  width: number;
+  height: number;
+  /** 修改過的整頁影像（PNG 或 JPEG）；沒有修改像素時為 null，保留原本的頁面內容 */
+  background: Uint8Array | null;
+  objects: ImageEditObject[];
+}
+
+export interface EditorPageImage {
+  /** 整頁影像（PNG，不含註解） */
+  png: Uint8Array;
+  /** 頁面大小（點） */
+  width: number;
+  height: number;
+  dpi: number;
+}
