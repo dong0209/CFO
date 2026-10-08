@@ -5,15 +5,19 @@ on:
     paths:
       - "PDFEditor/**"
       - "PDFEditorWindows/src/engine/**"
+      - "PDFEditorWindows/src/imageEditor/**"
       - "PDFEditorWindows/package*.json"
       - "PDFEditorWindows/vite.mac-engine.config.ts"
+      - "PDFEditorWindows/vite.mac-image-editor.config.ts"
       - ".github/workflows/pdf-editor-macos.yml"
   pull_request:
     paths:
       - "PDFEditor/**"
       - "PDFEditorWindows/src/engine/**"
+      - "PDFEditorWindows/src/imageEditor/**"
       - "PDFEditorWindows/package*.json"
       - "PDFEditorWindows/vite.mac-engine.config.ts"
+      - "PDFEditorWindows/vite.mac-image-editor.config.ts"
       - ".github/workflows/pdf-editor-macos.yml"
   workflow_dispatch:
 

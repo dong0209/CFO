@@ -21,6 +21,14 @@ struct ToolPalette: View {
             }
 
             Divider().frame(height: 20)
+            Button {
+                document.openImageEditor()
+            } label: {
+                Label("影像編輯", systemImage: "photo.on.rectangle.angled")
+            }
+            .help("影像編輯此頁（⌘E）：像編輯圖片一樣塗改、框選搬移、加文字與圖形")
+
+            Divider().frame(height: 20)
             styleControls
             Spacer(minLength: 0)
         }

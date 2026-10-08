@@ -11,7 +11,7 @@
     "typecheck": "tsc -p .",
     "e2e": "node e2e/app.e2e.mjs",
     "dist:win": "npm run build && electron-builder --win nsis portable --x64 --publish never",
-    "build:mac-engine": "vite build --config vite.mac-engine.config.ts"
+    "build:mac-engine": "vite build --config vite.mac-engine.config.ts && vite build --config vite.mac-image-editor.config.ts"
   },
   "author": "PDF 編輯器",
   "license": "AGPL-3.0-or-later",

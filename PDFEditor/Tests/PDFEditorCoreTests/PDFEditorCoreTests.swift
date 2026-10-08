@@ -367,6 +367,61 @@ final class TextEditEngineTests: XCTestCase {
     }
 
     @MainActor
+    func testImageEditThroughEngine() async throws {
+        guard PDFEngineBridge.engineDirectory != nil else {
+            throw XCTSkip("尚未建置文字編輯引擎")
+        }
+        _ = NSApplication.shared
+        let original = try XCTUnwrap(makeDocument(pages: 1).dataRepresentation())
+        let bridge = PDFEngineBridge.shared
+        let image = try await bridge.withDocument(original, password: nil) { id in
+            try await bridge.editorImage(document: id, page: 0, dpi: 72)
+        }
+        XCTAssertEqual(image.width, PageOperations.a4Size.width, accuracy: 1)
+        XCTAssertNotNil(NSImage(data: image.png), "應為可讀取的 PNG")
+
+        // 只加入物件：保留原本內容，新文字可搜尋
+        let objectsOnly = await ImageEditorSession.prepareEdit([
+            "width": Double(image.width),
+            "height": Double(image.height),
+            "background": NSNull(),
+            "objects": [
+                ["type": "text", "x": 100.0, "y": 300.0, "w": 200.0, "h": 30.0, "rotation": 0.0, "text": "Image Edit 影像編輯", "size": 18.0,
+                 "color": [0.0, 0.0, 1.0], "bold": true, "italic": false, "align": "left", "opacity": 1.0,
+                 "choice": ["kind": "system", "family": "Helvetica"]] as [String: Any],
+                ["type": "rect", "x": 100.0, "y": 400.0, "w": 80.0, "h": 40.0, "rotation": 15.0, "stroke": [1.0, 0.0, 0.0],
+                 "fill": NSNull(), "strokeWidth": 2.0, "opacity": 1.0] as [String: Any],
+            ],
+        ])
+        let objectsText = try XCTUnwrap(objectsOnly["objects"] as? [[String: Any]])
+        XCTAssertNotNil(objectsText[0]["font"], "應找到 Helvetica 字型檔")
+        XCTAssertNil(objectsText[0]["choice"])
+        let edited = try await bridge.withDocument(original, password: nil) { id in
+            try await bridge.applyImageEdit(document: id, page: 0, edit: objectsOnly)
+            return try await bridge.save(document: id)
+        }
+        let editedText = try XCTUnwrap(PDFDocument(data: edited)?.page(at: 0)?.string)
+        XCTAssertTrue(editedText.contains("Page 1"), editedText)
+        XCTAssertTrue(editedText.contains("Image Edit"), editedText)
+        XCTAssertTrue(editedText.contains("影像編輯"), editedText)
+
+        // 修改像素並裁切：整頁換成影像，頁面大小改變
+        let cropped = await ImageEditorSession.prepareEdit([
+            "width": 300.0,
+            "height": 200.0,
+            "background": image.png.base64EncodedString(),
+            "objects": [[String: Any]](),
+        ])
+        let croppedData = try await bridge.withDocument(original, password: nil) { id in
+            try await bridge.applyImageEdit(document: id, page: 0, edit: cropped)
+            return try await bridge.save(document: id)
+        }
+        let croppedPage = try XCTUnwrap(PDFDocument(data: croppedData)?.page(at: 0))
+        XCTAssertEqual(croppedPage.bounds(for: .mediaBox).size, CGSize(width: 300, height: 200))
+        XCTAssertFalse((croppedPage.string ?? "").contains("Page 1"), "像素修改後原本的文字層不應殘留")
+    }
+
+    @MainActor
     func testEncryptedDocumentNeedsPassword() async throws {
         guard PDFEngineBridge.engineDirectory != nil else {
             throw XCTSkip("尚未建置文字編輯引擎")

@@ -209,6 +209,43 @@ final class EditorDocument: ObservableObject, Identifiable {
         }
     }
 
+    // MARK: - 影像編輯模式
+
+    /// 以影像方式編輯目前的頁面：在工作表中開啟影像編輯器，套用後以新的 PDF 內容取代（可復原）。
+    func openImageEditor(pageIndex: Int? = nil) {
+        let index = pageIndex ?? currentPageIndex
+        guard !isEditingText, index >= 0, index < pdf.pageCount else { return }
+        pdfView?.endInlineEditing()
+        // 圖片、簽名、浮水印等自訂註解無法經由 PDF 資料保留，先固定到頁面中
+        bakeCustomAnnotations()
+        guard let data = pdf.dataRepresentation() else { return }
+        let password = security?.userPassword
+        let bridge = PDFEngineBridge.shared
+        isEditingText = true
+        Task { @MainActor in
+            defer { isEditingText = false }
+            do {
+                let image = try await bridge.withDocument(data, password: password) { id in
+                    try await bridge.editorImage(document: id, page: index)
+                }
+                let session = ImageEditorSession(page: image, title: "影像編輯：第 \(index + 1) 頁")
+                guard let result = try await session.run(over: pdfView?.window) else { return }
+                let workspace = Workspace.shared
+                workspace.beginProgress("正在套用影像編輯…", total: 1)
+                defer { workspace.endProgress() }
+                let edit = await ImageEditorSession.prepareEdit(result)
+                let edited = try await bridge.withDocument(data, password: password) { id in
+                    try await bridge.applyImageEdit(document: id, page: index, edit: edit)
+                    return try await bridge.save(document: id)
+                }
+                guard let document = PDFDocument(data: edited) else { throw PDFEngineError.invalidResponse("PDF") }
+                replaceDocument(with: document, actionName: "影像編輯")
+            } catch {
+                Panels.showError(error, title: "影像編輯失敗")
+            }
+        }
+    }
+
     static let ocrLanguageKey = "OCRLanguage"
 
     /// 框選範圍重新辨識：以 Vision 辨識範圍內的文字，取代範圍內原本的 OCR 文字，並直接開啟編輯框。

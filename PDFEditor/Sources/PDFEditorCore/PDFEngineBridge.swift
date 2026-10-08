@@ -269,6 +269,22 @@ public final class PDFEngineBridge: NSObject {
         return request
     }
 
+    // MARK: - 影像編輯模式
+
+    /// 影像編輯用的整頁影像（不含註解）。
+    public func editorImage(document id: Int, page: Int, dpi: Double = 200) async throws -> EditorPageImage {
+        guard let result = try await call("editorImage", [id, page, dpi]) as? [String: Any],
+              let png = result["png"] as? Data,
+              let width = (result["width"] as? NSNumber)?.doubleValue,
+              let height = (result["height"] as? NSNumber)?.doubleValue else { throw PDFEngineError.invalidResponse("editorImage") }
+        return EditorPageImage(png: png, width: CGFloat(width), height: CGFloat(height))
+    }
+
+    /// 套用影像編輯結果（由 ImageEditorSession.prepareEdit 轉換後的格式）。
+    public func applyImageEdit(document id: Int, page: Int, edit: [String: Any]) async throws {
+        _ = try await call("applyImageEdit", [id, page, edit])
+    }
+
     public func save(document id: Int) async throws -> Data {
         guard let data = try await call("save", [id, [String: Any]()]) as? Data else { throw PDFEngineError.invalidResponse("save") }
         return data
@@ -346,7 +362,7 @@ extension PDFEngineBridge: WKNavigationDelegate, WKScriptMessageHandler {
 }
 
 /// 避免 WKUserContentController 強引用造成循環參考。
-private final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
+final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
     weak var target: WKScriptMessageHandler?
 
     init(_ target: WKScriptMessageHandler) {
@@ -359,7 +375,7 @@ private final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
 }
 
 /// 以自訂網址（pdfengine://）提供引擎檔案，讓 ES 模組與 WebAssembly 能正常載入。
-private final class EngineSchemeHandler: NSObject, WKURLSchemeHandler {
+final class EngineSchemeHandler: NSObject, WKURLSchemeHandler {
     static let scheme = "pdfengine"
     let root: URL
 

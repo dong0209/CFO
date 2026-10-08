@@ -180,6 +180,10 @@ struct ToolCommands: Commands {
                 toolButton(tool)
             }
             Divider()
+            Button("影像編輯此頁…") { document?.openImageEditor() }
+                .keyboardShortcut("e")
+                .disabled(document == nil)
+            Divider()
             Group {
                 Button("簽名…") { workspace.activeSheet = .signatures }
                 Button("浮水印…") { workspace.activeSheet = .watermark }
