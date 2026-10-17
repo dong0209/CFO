@@ -269,28 +269,58 @@ final class FontTests: XCTestCase {
         }
     }
 
+    @MainActor
     func testDiagnosePDFKitAnnotationContext() throws {
         final class Probe: PDFAnnotation {
+            var mode = 0
             var log: [String] = []
             override func draw(with box: PDFDisplayBox, in context: CGContext) {
-                let m = context.ctm
-                log.append("ctm=[\(m.a) \(m.b) \(m.c) \(m.d) \(m.tx) \(m.ty)]")
+                guard let page else { return }
+                let t = page.transform(for: box)
+                log.append("box=\(box.rawValue) t=[\(t.a) \(t.b) \(t.c) \(t.d) \(t.tx) \(t.ty)] ctm=\(context.ctm)")
+                context.saveGState()
+                var rect = bounds
+                if mode == 1 { context.concatenate(t) }
+                if mode == 2 { rect = bounds.applying(t) }
                 context.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
-                context.fill(CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width / 2, height: bounds.height))
+                context.fill(CGRect(x: rect.minX, y: rect.minY, width: rect.width / 2, height: rect.height))
                 context.setFillColor(red: 0, green: 0, blue: 1, alpha: 1)
-                context.fill(CGRect(x: bounds.midX, y: bounds.minY, width: bounds.width / 2, height: bounds.height))
+                context.fill(CGRect(x: rect.midX, y: rect.minY, width: rect.width / 2, height: rect.height))
+                context.restoreGState()
             }
         }
-        for rotation in [0, 90, 180, 270] {
-            let document = makeDocument(pages: 1, size: CGSize(width: 600, height: 800))
-            let page = try XCTUnwrap(document.page(at: 0))
-            page.rotation = rotation
-            let probe = Probe(bounds: CGRect(x: 100, y: 100, width: 200, height: 50), forType: .stamp, withProperties: nil)
-            page.addAnnotation(probe)
-            let rendered = try XCTUnwrap(PageRenderer.image(for: page, dpi: 72))
-            let red = colorBox(rendered) { $0 > 200 && $1 < 60 && $2 < 60 }
-            let blue = colorBox(rendered) { $0 < 60 && $1 < 60 && $2 > 200 }
-            print("DIAG rotation \(rotation): image \(rendered.width)x\(rendered.height) red \(String(describing: red?.box)) blue \(String(describing: blue?.box)) \(probe.log)")
+        for mode in [1, 2] {
+            for rotation in [0, 90, 180, 270] {
+                let document = makeDocument(pages: 1, size: CGSize(width: 600, height: 800))
+                let page = try XCTUnwrap(document.page(at: 0))
+                page.rotation = rotation
+                let probe = Probe(bounds: CGRect(x: 100, y: 100, width: 200, height: 50), forType: .stamp, withProperties: nil)
+                probe.mode = mode
+                page.addAnnotation(probe)
+                let rendered = try XCTUnwrap(PageRenderer.image(for: page, dpi: 72))
+                let red = colorBox(rendered) { $0 > 200 && $1 < 60 && $2 < 60 }
+                let blue = colorBox(rendered) { $0 < 60 && $1 < 60 && $2 > 200 }
+                print("DIAG mode \(mode) rotation \(rotation): image \(rendered.width)x\(rendered.height) red \(String(describing: red?.box)) blue \(String(describing: blue?.box)) \(probe.log)")
+
+                // PDFView 實際顯示
+                probe.log = []
+                let view = PDFView(frame: CGRect(x: 0, y: 0, width: 1000, height: 1000))
+                view.displayMode = .singlePage
+                view.displaysPageBreaks = false
+                view.autoScales = false
+                view.document = document
+                view.scaleFactor = 1
+                view.layoutSubtreeIfNeeded()
+                if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                    view.cacheDisplay(in: view.bounds, to: rep)
+                    if let image = rep.cgImage {
+                        let vr = colorBox(image) { $0 > 200 && $1 < 60 && $2 < 60 }
+                        let vb = colorBox(image) { $0 < 60 && $1 < 60 && $2 > 200 }
+                        let text = colorBox(image) { $0 < 60 && $1 < 60 && $2 < 60 }
+                        print("DIAG-VIEW mode \(mode) rotation \(rotation): \(image.width)x\(image.height) red \(String(describing: vr?.box)) blue \(String(describing: vb?.box)) text \(String(describing: text?.box)) \(probe.log)")
+                    }
+                }
+            }
         }
     }
 
