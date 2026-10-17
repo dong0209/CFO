@@ -269,6 +269,31 @@ final class FontTests: XCTestCase {
         }
     }
 
+    func testDiagnosePDFKitAnnotationContext() throws {
+        final class Probe: PDFAnnotation {
+            var log: [String] = []
+            override func draw(with box: PDFDisplayBox, in context: CGContext) {
+                let m = context.ctm
+                log.append("ctm=[\(m.a) \(m.b) \(m.c) \(m.d) \(m.tx) \(m.ty)]")
+                context.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
+                context.fill(CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width / 2, height: bounds.height))
+                context.setFillColor(red: 0, green: 0, blue: 1, alpha: 1)
+                context.fill(CGRect(x: bounds.midX, y: bounds.minY, width: bounds.width / 2, height: bounds.height))
+            }
+        }
+        for rotation in [0, 90, 180, 270] {
+            let document = makeDocument(pages: 1, size: CGSize(width: 600, height: 800))
+            let page = try XCTUnwrap(document.page(at: 0))
+            page.rotation = rotation
+            let probe = Probe(bounds: CGRect(x: 100, y: 100, width: 200, height: 50), forType: .stamp, withProperties: nil)
+            page.addAnnotation(probe)
+            let rendered = try XCTUnwrap(PageRenderer.image(for: page, dpi: 72))
+            let red = colorBox(rendered) { $0 > 200 && $1 < 60 && $2 < 60 }
+            let blue = colorBox(rendered) { $0 < 60 && $1 < 60 && $2 > 200 }
+            print("DIAG rotation \(rotation): image \(rendered.width)x\(rendered.height) red \(String(describing: red?.box)) blue \(String(describing: blue?.box)) \(probe.log)")
+        }
+    }
+
     func testFreeTextIsUprightOnRotatedPages() throws {
         for rotation in [0, 90, 180, 270] {
             let document = makeDocument(pages: 1, size: CGSize(width: 600, height: 800))
