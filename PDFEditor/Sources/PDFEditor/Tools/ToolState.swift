@@ -116,7 +116,10 @@ final class ToolState: ObservableObject {
 
     @Published var tool: Tool = .select {
         didSet {
-            if tool != oldValue, !keepsColorOnToolChange { color = tool.defaultColor }
+            guard tool != oldValue, !keepsColorOnToolChange else { return }
+            color = tool.defaultColor
+            // 換成其他工具時取消尚未放置的圖片或簽名
+            pendingImage = nil
         }
     }
     @Published var color: Color = .black
