@@ -18,6 +18,8 @@ final class EditorDocument: ObservableObject, Identifiable {
     @Published var selectedPageIDs: Set<ObjectIdentifier> = []
     @Published var searchQuery = ""
     @Published private(set) var searchResults: [PDFSelection] = []
+    /// 最近一次實際搜尋的字串（用來區分「尚未搜尋」與「找不到」）
+    @Published private(set) var searchedQuery: String?
     @Published var currentSearchIndex = 0
     /// 存檔時要套用的密碼；nil 代表不加密。
     @Published var security: SecurityOptions?
@@ -333,7 +335,7 @@ final class EditorDocument: ObservableObject, Identifiable {
         registerUndo(actionName) { $0.replaceDocument(with: previous, actionName: actionName) }
         markChanged()
         // 內容改變後重新搜尋，搜尋結果才會對應到新的文件
-        if !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { search() }
+        if !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { search(reveal: false) }
     }
 
     /// 雙擊註解：文字方塊開啟文字樣式對話框，便利貼則直接編輯內容。
@@ -576,18 +578,25 @@ final class EditorDocument: ObservableObject, Identifiable {
 
     // MARK: - 搜尋
 
-    func search() {
+    /// 搜尋文件；`reveal` 為 false 時只更新結果與標示，不捲動到第一筆（內容修改後重新搜尋時使用）。
+    func search(reveal: Bool = true) {
         let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         pdf.cancelFindString()
         guard !query.isEmpty else {
             searchResults = []
+            searchedQuery = nil
             pdfView?.highlightedSelections = nil
             return
         }
+        searchedQuery = query
         let results = pdf.findString(query, withOptions: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive])
         results.forEach { $0.color = NSColor.systemYellow.withAlphaComponent(0.6) }
         searchResults = results
         pdfView?.highlightedSelections = results
+        guard reveal else {
+            currentSearchIndex = min(currentSearchIndex, max(0, results.count - 1))
+            return
+        }
         currentSearchIndex = 0
         if let first = results.first { show(first) }
     }

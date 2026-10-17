@@ -322,8 +322,9 @@ private struct SearchSidebar: View {
             }
             .listStyle(.sidebar)
             .overlay {
-                if document.searchResults.isEmpty, !document.searchQuery.isEmpty {
-                    Text("按 Return 開始搜尋").font(.caption).foregroundStyle(.secondary)
+                let query = document.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+                if document.searchResults.isEmpty, !query.isEmpty {
+                    Text(document.searchedQuery == query ? "找不到「\(query)」" : "按 Return 開始搜尋").font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
