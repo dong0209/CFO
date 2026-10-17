@@ -7,9 +7,14 @@ import UniformTypeIdentifiers
 extension EditorDocument {
     func showInsertPagesPanel() {
         let urls = Panels.openPDFs(title: "選擇要插入的 PDF")
-        let documents = urls.compactMap { PDFDocument(url: $0) }.filter { !$0.isLocked }
+        // 受密碼保護的檔案先要求輸入密碼
+        let documents = urls.compactMap { url -> PDFDocument? in
+            guard let pdf = PDFDocument(url: url) else { return nil }
+            if pdf.isLocked, Workspace.shared.unlock(pdf, name: url.lastPathComponent) == nil { return nil }
+            return pdf
+        }
         if documents.count < urls.count {
-            Panels.showMessage(title: "部分檔案無法插入", message: "受密碼保護或損毀的檔案已略過。", style: .warning)
+            Panels.showMessage(title: "部分檔案未插入", message: "損毀或未輸入密碼的檔案已略過。", style: .warning)
         }
         let after = targetPageIndices.max()
         insertPages(from: documents, after: after)

@@ -703,7 +703,7 @@ export class PdfEngine {
       let font: mupdf.Font | undefined;
       let gid = 0;
       for (const candidate of chain) {
-        gid = candidate.encodeCharacter(ch);
+        gid = candidate.encodeCharacter(ch.codePointAt(0) ?? 0);
         if (gid > 0) {
           font = candidate;
           break;
@@ -1972,7 +1972,7 @@ function encodeWith(encoder: Map<string, string>, text: string): string | null {
 
 function coversText(font: mupdf.Font, text: string): boolean {
   for (const ch of text) {
-    if (ch.trim() && font.encodeCharacter(ch) <= 0) return false;
+    if (ch.trim() && font.encodeCharacter(ch.codePointAt(0) ?? 0) <= 0) return false;
   }
   return true;
 }
@@ -2005,6 +2005,8 @@ function transformRect([x0, y0, x1, y1]: Rect, m: Matrix): Rect {
 }
 
 function fmt(n: number): string {
+  // 防止 NaN／Infinity 寫進 PDF 內容造成無法開啟
+  if (!Number.isFinite(n)) return "0";
   return Number.isInteger(n) ? String(n) : n.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
 }
 

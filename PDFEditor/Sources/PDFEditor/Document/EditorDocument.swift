@@ -325,12 +325,15 @@ final class EditorDocument: ObservableObject, Identifiable {
         selectedPageIDs = []
         selectedAnnotation = nil
         searchResults = []
+        pdfView?.highlightedSelections = nil
         pdfView?.document = document
         if let page = document.page(at: max(0, min(pageIndex, document.pageCount - 1))) {
             pdfView?.go(to: PDFDestination(page: page, at: destination?.point ?? CGPoint(x: 0, y: page.bounds(for: .cropBox).maxY)))
         }
         registerUndo(actionName) { $0.replaceDocument(with: previous, actionName: actionName) }
         markChanged()
+        // 內容改變後重新搜尋，搜尋結果才會對應到新的文件
+        if !searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { search() }
     }
 
     /// 雙擊註解：文字方塊開啟文字樣式對話框，便利貼則直接編輯內容。
@@ -511,18 +514,32 @@ final class EditorDocument: ObservableObject, Identifiable {
         item.label = label
         let top = page.bounds(for: .cropBox).maxY
         item.destination = PDFDestination(page: page, at: CGPoint(x: 0, y: top))
-        root.insertChild(item, at: root.numberOfChildren)
+        insertBookmark(item, into: root, at: root.numberOfChildren)
+    }
+
+    private func insertBookmark(_ item: PDFOutline, into parent: PDFOutline, at index: Int) {
+        parent.insertChild(item, at: min(index, parent.numberOfChildren))
+        registerUndo("新增書籤") { $0.removeBookmark(item) }
         markChanged()
     }
 
     func renameBookmark(_ outline: PDFOutline) {
         guard let label = Panels.promptText(title: "重新命名書籤", initial: outline.label ?? "") else { return }
+        setBookmarkLabel(outline, label)
+    }
+
+    private func setBookmarkLabel(_ outline: PDFOutline, _ label: String) {
+        let previous = outline.label ?? ""
         outline.label = label
+        registerUndo("重新命名書籤") { $0.setBookmarkLabel(outline, previous) }
         markChanged()
     }
 
     func removeBookmark(_ outline: PDFOutline) {
+        guard let parent = outline.parent else { return }
+        let index = (0..<parent.numberOfChildren).first { parent.child(at: $0) === outline } ?? parent.numberOfChildren
         outline.removeFromParent()
+        registerUndo("刪除書籤") { $0.insertBookmark(outline, into: parent, at: index) }
         markChanged()
     }
 

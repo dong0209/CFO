@@ -119,7 +119,8 @@ final class Workspace: ObservableObject {
         noteRecent(url)
     }
 
-    private func unlock(_ pdf: PDFDocument, name: String) -> String? {
+    /// 要求輸入密碼直到解鎖成功；取消時回傳 nil。
+    func unlock(_ pdf: PDFDocument, name: String) -> String? {
         var message = "「\(name)」受密碼保護，請輸入密碼："
         while true {
             guard let password = Panels.promptText(title: "需要密碼", message: message, secure: true) else { return nil }
