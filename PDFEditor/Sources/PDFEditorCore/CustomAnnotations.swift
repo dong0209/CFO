@@ -16,6 +16,23 @@ open class CustomDrawnAnnotation: PDFAnnotation {
 
     /// 是否允許使用者以滑鼠拖曳移動。
     open var isUserMovable: Bool { true }
+
+    /// 以「畫面方向」繪製：頁面旋轉時先反向旋轉座標系，內容在畫面上才會是正的。
+    /// `draw` 收到的是畫面方向下、與 `rect` 同一位置的外框（旋轉 90°／270° 時寬高互換）。
+    public func drawUpright(in context: CGContext, rect: CGRect, _ draw: (CGRect) -> Void) {
+        let rotation = PageOperations.normalizedRotation(page?.rotation ?? 0)
+        guard rotation != 0 else {
+            draw(rect)
+            return
+        }
+        let sideways = rotation % 180 != 0
+        let size = sideways ? CGSize(width: rect.height, height: rect.width) : rect.size
+        context.saveGState()
+        context.translateBy(x: rect.midX, y: rect.midY)
+        context.rotate(by: CGFloat(rotation) * .pi / 180)
+        draw(CGRect(x: -size.width / 2, y: -size.height / 2, width: size.width, height: size.height))
+        context.restoreGState()
+    }
 }
 
 /// 圖片或手寫簽名。
@@ -37,7 +54,7 @@ public final class ImageStampAnnotation: CustomDrawnAnnotation {
     public override func draw(with box: PDFDisplayBox, in context: CGContext) {
         context.saveGState()
         context.interpolationQuality = .high
-        context.draw(image, in: bounds)
+        drawUpright(in: context, rect: bounds) { context.draw(image, in: $0) }
         context.restoreGState()
     }
 }
@@ -74,9 +91,11 @@ public final class WatermarkAnnotation: CustomDrawnAnnotation {
         let size = attributed.size()
         context.saveGState()
         context.setAlpha(opacity)
-        context.translateBy(x: bounds.midX, y: bounds.midY)
-        context.rotate(by: angle * .pi / 180)
-        TextDrawing.draw(attributed, at: CGPoint(x: -size.width / 2, y: -size.height / 2), in: context)
+        drawUpright(in: context, rect: bounds) { rect in
+            context.translateBy(x: rect.midX, y: rect.midY)
+            context.rotate(by: angle * .pi / 180)
+            TextDrawing.draw(attributed, at: CGPoint(x: -size.width / 2, y: -size.height / 2), in: context)
+        }
         context.restoreGState()
     }
 }
@@ -144,8 +163,13 @@ public final class TextStampAnnotation: CustomDrawnAnnotation {
             .font: TextDrawing.font(size: fontSize, bold: false),
             .foregroundColor: textColor,
         ])
-        let origin = position.origin(for: attributed.size(), in: bounds, margin: margin)
-        TextDrawing.draw(attributed, at: origin, in: context)
+        // 位置以畫面方向計算：旋轉的頁面上頁碼仍在畫面的下方
+        context.saveGState()
+        drawUpright(in: context, rect: bounds) { rect in
+            let origin = position.origin(for: attributed.size(), in: rect, margin: margin)
+            TextDrawing.draw(attributed, at: origin, in: context)
+        }
+        context.restoreGState()
     }
 }
 

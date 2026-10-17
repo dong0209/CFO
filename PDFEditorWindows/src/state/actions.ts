@@ -403,8 +403,15 @@ export async function insertFromFile(after: number) {
   const files = await api().openFiles("pdf", true, "選擇要插入的 PDF");
   let at = after + 1;
   for (const file of files) {
+    // 受密碼保護的檔案先要求輸入密碼；取消則略過該檔
+    const probe = await guard(`無法開啟「${file.name}」`, () => engine.open(file.data));
+    if (!probe) continue;
+    let password: string | null = null;
+    if (probe.needsPassword) password = await unlockLoop(probe.id, file.name);
+    await engine.close(probe.id);
+    if (probe.needsPassword && password === null) continue;
     await mutate(`無法插入「${file.name}」`, async (tab) => {
-      at += await engine.insertDocument(tab.engineId, at, file.data);
+      at += await engine.insertDocument(tab.engineId, at, file.data, password);
     });
   }
 }

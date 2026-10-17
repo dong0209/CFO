@@ -2,7 +2,7 @@ import { useState } from "react";
 import { PAGE_NUMBER_PRESETS, indicesFromRanges, parsePageRanges, renderPageNumber } from "../../engine/pageRanges";
 import type { ImageFormat, StampPosition } from "../../engine/types";
 import { engine } from "../../lib/engine";
-import { type OcrLanguage, OCR_LANGUAGES, runOcr } from "../../lib/ocr";
+import { lastOcrLanguage, type OcrLanguage, OCR_LANGUAGES, runOcr } from "../../lib/ocr";
 import { exportImages, mutate, splitDocument, targetPages } from "../../state/actions";
 import { type DocTab, hexToRgb, updateTab } from "../../state/store";
 import { Dialog } from "../Modal";
@@ -300,7 +300,7 @@ export function ExportImagesDialog({ tab, done }: { tab: DocTab; done: Done }) {
 // MARK: - OCR
 
 export function OcrDialog({ tab, done }: { tab: DocTab; done: Done }) {
-  const [language, setLanguage] = useState<OcrLanguage>("chi_tra");
+  const [language, setLanguage] = useState<OcrLanguage>(lastOcrLanguage);
   const [onlyEmpty, setOnlyEmpty] = useState(true);
   const { pages, element } = usePageScope(tab);
   return (

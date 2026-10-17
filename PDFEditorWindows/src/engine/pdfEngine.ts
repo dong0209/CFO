@@ -323,8 +323,9 @@ export class PdfEngine {
    */
   addFreeText(id: number, pageIndex: number, at: Point, text: string, style: TextBoxStyle, font: FontData | null = null, fallbackFont: FontData | null = null): number {
     return this.op(id, "文字方塊", (doc) => {
-      const annot = this.page(id, pageIndex).createAnnotation("FreeText");
-      this.writeFreeText(doc, annot, at, text, style, font, fallbackFont);
+      const page = this.page(id, pageIndex);
+      const annot = page.createAnnotation("FreeText");
+      this.writeFreeText(doc, annot, pageRotation(page), at, text, style, font, fallbackFont);
       return annot.getObject().asIndirect();
     });
   }
@@ -332,13 +333,14 @@ export class PdfEngine {
   /** 修改文字方塊的文字與字型（位置不變）。 */
   updateFreeText(id: number, pageIndex: number, annotId: number, text: string, style: TextBoxStyle, font: FontData | null = null, fallbackFont: FontData | null = null): void {
     this.op(id, "編輯文字", (doc) => {
-      const annot = this.findAnnot(this.page(id, pageIndex), annotId);
+      const page = this.page(id, pageIndex);
+      const annot = this.findAnnot(page, annotId);
       const [x0, y0] = annot.getRect();
-      this.writeFreeText(doc, annot, [x0, y0], text, style, font, fallbackFont);
+      this.writeFreeText(doc, annot, pageRotation(page), [x0, y0], text, style, font, fallbackFont);
     });
   }
 
-  private writeFreeText(doc: mupdf.PDFDocument, annot: mupdf.PDFAnnotation, at: Point, text: string, style: TextBoxStyle, font: FontData | null, fallbackFont: FontData | null) {
+  private writeFreeText(doc: mupdf.PDFDocument, annot: mupdf.PDFAnnotation, rotation: number, at: Point, text: string, style: TextBoxStyle, font: FontData | null, fallbackFont: FontData | null) {
     const primary = [font, fallbackFont].map((f, i) => (f ? loadFont(i === 0 ? "TextBox" : "Fallback", f.data, f.index ?? 0) : null)).filter((f): f is mupdf.Font => f !== null);
     const chain = this.fontChain({ bold: style.bold, italic: style.italic, serif: false, mono: false }, primary);
     const size = style.fontSize;
@@ -369,7 +371,8 @@ export class PdfEngine {
       for (const run of runs) ops.push(`/${names.get(run.font)} ${fmt(size)} Tf <${run.gids.map((g) => g.toString(16).padStart(4, "0")).join("")}> Tj`);
     });
     ops.push("ET");
-    annot.setAppearance(null, null, mupdf.Matrix.identity, [0, 0, width, height], { Font: fonts }, ops.join("\n"));
+    // 旋轉的頁面上，外觀串流要反向旋轉，文字在畫面上才會是正的
+    annot.setAppearance(null, null, uprightMatrix(rotation, width, height), [0, 0, width, height], { Font: fonts }, ops.join("\n"));
     const obj = annot.getObject();
     obj.put(FONT_KEY, doc.newString(style.family ?? ""));
     obj.put(FONT_STYLE_KEY, doc.newString(`${style.bold ? "bold" : ""} ${style.italic ? "italic" : ""}`.trim()));
@@ -434,14 +437,24 @@ export class PdfEngine {
 
   /** 圖片或簽名：以 Stamp 註解保存，可在其他 PDF 閱讀器中正常顯示。 */
   addImage(id: number, pageIndex: number, rect: Rect, image: Uint8Array, isSignature: boolean): number {
-    return this.op(id, isSignature ? "簽名" : "插入圖片", () => {
-      const annot = this.page(id, pageIndex).createAnnotation("Stamp");
-      annot.setRect(rect);
-      annot.setStampImage(new mupdf.Image(image));
+    return this.op(id, isSignature ? "簽名" : "插入圖片", (doc) => {
+      const page = this.page(id, pageIndex);
+      const annot = page.createAnnotation("Stamp");
       annot.setContents(isSignature ? "簽名" : "圖片");
-      annot.getObject().put(ROLE_KEY, isSignature ? "signature" : "image");
       annot.update();
-      return annot.getObject().asIndirect();
+      // MuPDF 會依預設圖章調整外框比例，產生外觀前再設定一次
+      annot.setRect(rect);
+      // 自行產生外觀：旋轉的頁面上圖片也要是正的（MuPDF 內建的圖章外觀不會反向旋轉）
+      const [x0, y0, x1, y1] = annot.getRect();
+      const w = x1 - x0;
+      const h = y1 - y0;
+      const xobjects = doc.newDictionary();
+      xobjects.put("Img", doc.addImage(new mupdf.Image(image)));
+      annot.setAppearance(null, null, uprightMatrix(pageRotation(page), w, h), [0, 0, w, h], { XObject: xobjects }, `q ${fmt(w)} 0 0 ${fmt(h)} 0 0 cm /Img Do Q`);
+      const obj = annot.getObject();
+      obj.put(ROLE_KEY, isSignature ? "signature" : "image");
+      obj.put(CUSTOM_AP_KEY, true);
+      return obj.asIndirect();
     });
   }
 
@@ -2030,6 +2043,25 @@ function rgbToRgba(rgb: Uint8ClampedArray, width: number, height: number, stride
 
 function normalizeRotation(degrees: number): number {
   return (((Math.round(degrees / 90) * 90) % 360) + 360) % 360;
+}
+
+function pageRotation(page: mupdf.PDFPage): number {
+  const rotate = page.getObject().getInheritable("Rotate");
+  return rotate.isNumber() ? normalizeRotation(rotate.asNumber()) : 0;
+}
+
+/** 外觀串流的矩陣：w×h 的外觀在旋轉的頁面上看起來是正的（反向旋轉後移回原點）。 */
+function uprightMatrix(rotation: number, w: number, h: number): Matrix {
+  switch (rotation) {
+    case 90:
+      return [0, 1, -1, 0, h, 0];
+    case 180:
+      return [-1, 0, 0, -1, w, h];
+    case 270:
+      return [0, -1, 1, 0, 0, w];
+    default:
+      return [1, 0, 0, 1, 0, 0];
+  }
 }
 
 function safe<T>(fn: () => T, fallback: T): T {

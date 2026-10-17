@@ -355,4 +355,33 @@ describe("頁面與旋轉", () => {
       expect(after.some((l) => l.text === "Second line")).toBe(true);
     }
   });
+
+  it("旋轉過的頁面上，文字方塊與圖片在畫面上是正的", () => {
+    // 左半紅、右半藍的圖片
+    const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, 80, 20], false);
+    const px = pixmap.getPixels();
+    for (let i = 0; i < 80 * 20; i++) px.set((i % 80) < 40 ? [255, 0, 0] : [0, 0, 255], i * 3);
+    const png = pixmap.asPNG().slice();
+    for (const rotation of [0, 90, 180, 270]) {
+      const engine = new PdfEngine();
+      const { id } = engine.open(makePdf(1));
+      if (rotation) engine.rotatePages(id, [0], rotation);
+      const box = engine.addFreeText(id, 0, [100, 150], "Upright Text", { fontSize: 20, color: [0, 0, 0], bold: false, italic: false });
+      const image = engine.addImage(id, 0, [100, 350, 300, 400], png, true);
+      engine.moveAnnotation(id, 0, image, 10, 10);
+      engine.updateFreeText(id, 0, box, "Upright Again", { fontSize: 20, color: [0, 0, 0], bold: false, italic: false });
+      const rect = engine.annotations(id, 0).find((a) => a.id === image)!.rect;
+      expect(rect.map(Math.round), `旋轉 ${rotation}°`).toEqual([110, 360, 310, 410]);
+
+      const { pixels, width } = engine.render(id, 0, 1);
+      const at = (x: number, y: number) => Array.from(pixels.slice((y * width + x) * 4, (y * width + x) * 4 + 3));
+      expect(at(150, 385), `旋轉 ${rotation}°`).toEqual([255, 0, 0]);
+      expect(at(270, 385), `旋轉 ${rotation}°`).toEqual([0, 0, 255]);
+
+      // 平面化後文字方塊的文字是水平的
+      engine.flatten(id);
+      const lines = engine.textLines(id, 0);
+      expect(lines.find((l) => l.text === "Upright Again")?.angle, `旋轉 ${rotation}°`).toBe(0);
+    }
+  });
 });

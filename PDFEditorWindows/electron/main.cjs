@@ -192,8 +192,16 @@ function registerIpc() {
   // 先寫入暫存檔再取代，避免寫到一半失敗時損毀原檔
   ipcMain.handle("file:write", async (_e, filePath, data) => {
     const temp = `${filePath}.${process.pid}.tmp`;
-    await fsp.writeFile(temp, data);
-    await fsp.rename(temp, filePath);
+    try {
+      await fsp.writeFile(temp, data);
+      await fsp.rename(temp, filePath);
+    } catch (error) {
+      await fsp.rm(temp, { force: true }).catch(() => {});
+      if (error && (error.code === "EPERM" || error.code === "EBUSY" || error.code === "EACCES")) {
+        throw new Error("無法寫入檔案：檔案可能正被其他程式開啟，或沒有寫入權限。請關閉其他程式或另存到其他位置。");
+      }
+      throw error;
+    }
     if (filePath.toLowerCase().endsWith(".pdf")) addRecent(filePath);
   });
 

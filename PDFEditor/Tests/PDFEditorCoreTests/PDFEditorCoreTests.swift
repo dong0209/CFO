@@ -216,6 +216,74 @@ final class FontTests: XCTestCase {
         XCTAssertEqual(missing.pointSize, 12)
     }
 
+    /// 依顏色找出像素的中心與外框（畫面座標，原點在左上）。
+    private func colorBox(_ image: CGImage, match: (UInt8, UInt8, UInt8) -> Bool) -> (center: CGPoint, box: CGRect)? {
+        let width = image.width, height = image.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var sx = 0.0, sy = 0.0, count = 0.0
+        var minX = Int.max, minY = Int.max, maxX = 0, maxY = 0
+        for y in 0..<height {
+            for x in 0..<width {
+                let i = (y * width + x) * 4
+                guard match(pixels[i], pixels[i + 1], pixels[i + 2]) else { continue }
+                sx += Double(x); sy += Double(y); count += 1
+                minX = min(minX, x); minY = min(minY, y); maxX = max(maxX, x); maxY = max(maxY, y)
+            }
+        }
+        guard count > 0 else { return nil }
+        return (CGPoint(x: sx / count, y: sy / count), CGRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1))
+    }
+
+    func testCustomAnnotationsAreUprightOnRotatedPages() throws {
+        // 左半紅、右半藍的圖片
+        let imageContext = CGContext(data: nil, width: 80, height: 20, bitsPerComponent: 8, bytesPerRow: 0,
+                                     space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        imageContext.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
+        imageContext.fill(CGRect(x: 0, y: 0, width: 40, height: 20))
+        imageContext.setFillColor(red: 0, green: 0, blue: 1, alpha: 1)
+        imageContext.fill(CGRect(x: 40, y: 0, width: 40, height: 20))
+        let picture = try XCTUnwrap(imageContext.makeImage())
+
+        for rotation in [0, 90, 180, 270] {
+            let document = makeDocument(pages: 1, size: CGSize(width: 600, height: 800))
+            let page = try XCTUnwrap(document.page(at: 0))
+            page.rotation = rotation
+            let sideways = rotation % 180 != 0
+            page.addAnnotation(ImageStampAnnotation(image: picture, bounds: CGRect(x: 200, y: 300, width: sideways ? 50 : 200, height: sideways ? 200 : 50)))
+            page.addAnnotation(TextStampAnnotation(pageBounds: page.bounds(for: .cropBox), text: "1 / 1", fontSize: 30, color: NSColor(red: 0, green: 0.8, blue: 0, alpha: 1), position: .bottomCenter, margin: 20))
+
+            for (label, target) in [("畫面", page), ("燒進頁面後", try XCTUnwrap(PageFlattener.bakeCustomAnnotations(page)?.newPage))] {
+                let rendered = try XCTUnwrap(PageRenderer.image(for: target, dpi: 72))
+                let red = try XCTUnwrap(colorBox(rendered) { $0 > 200 && $1 < 60 && $2 < 60 })
+                let blue = try XCTUnwrap(colorBox(rendered) { $0 < 60 && $1 < 60 && $2 > 200 })
+                XCTAssertLessThan(red.center.x, blue.center.x - 50, "旋轉 \(rotation)°（\(label)）：圖片應是正的")
+                XCTAssertEqual(red.center.y, blue.center.y, accuracy: 3, "旋轉 \(rotation)°（\(label)）")
+                XCTAssertGreaterThan(red.box.width, red.box.height, "旋轉 \(rotation)°（\(label)）：圖片不應被壓扁")
+                let number = try XCTUnwrap(colorBox(rendered) { $0 < 80 && $1 > 150 && $2 < 80 })
+                XCTAssertGreaterThan(number.center.y, Double(rendered.height) * 0.85, "旋轉 \(rotation)°（\(label)）：頁碼應在畫面下方")
+                XCTAssertGreaterThan(number.box.width, number.box.height, "旋轉 \(rotation)°（\(label)）：頁碼應是水平的")
+            }
+        }
+    }
+
+    func testFreeTextIsUprightOnRotatedPages() throws {
+        for rotation in [0, 90, 180, 270] {
+            let document = makeDocument(pages: 1, size: CGSize(width: 600, height: 800))
+            let page = try XCTUnwrap(document.page(at: 0))
+            page.rotation = rotation
+            let font = FontCatalog.font(family: "Helvetica", face: nil, size: 30)
+            let annotation = FreeTextStyle.make(text: "WWWWWWWWWW", font: font, color: NSColor(red: 0, green: 0.8, blue: 0, alpha: 1), topLeft: CGPoint(x: 100, y: 500))
+            page.addAnnotation(annotation)
+            let rendered = try XCTUnwrap(PageRenderer.image(for: page, dpi: 72))
+            let text = try XCTUnwrap(colorBox(rendered) { $0 < 80 && $1 > 150 && $2 < 80 })
+            print("FreeText rotation \(rotation): annotation bounds \(annotation.bounds), rendered box \(text.box)")
+            XCTAssertGreaterThan(text.box.width, text.box.height * 2, "旋轉 \(rotation)°：文字方塊應是水平的")
+        }
+    }
+
     func testFreeTextKeepsTopLeftAndFontAfterSave() throws {
         let document = PDFDocument()
         let page = PageOperations.blankPage()

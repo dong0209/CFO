@@ -351,9 +351,13 @@ final class EditorDocument: ObservableObject, Identifiable {
         let aspect = CGFloat(image.height) / CGFloat(max(image.width, 1))
         var size = CGSize(width: targetWidth, height: targetWidth * aspect)
         let pageBounds = page.bounds(for: .cropBox)
-        if size.height > pageBounds.height * 0.8 {
-            size = CGSize(width: pageBounds.height * 0.8 / aspect, height: pageBounds.height * 0.8)
+        // 尺寸以畫面方向計算；旋轉 90°／270° 的頁面上，頁面座標的寬高互換
+        let sideways = PageOperations.normalizedRotation(page.rotation) % 180 != 0
+        let viewHeight = sideways ? pageBounds.width : pageBounds.height
+        if size.height > viewHeight * 0.8 {
+            size = CGSize(width: viewHeight * 0.8 / aspect, height: viewHeight * 0.8)
         }
+        if sideways { size = CGSize(width: size.height, height: size.width) }
         let bounds = CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2, width: size.width, height: size.height)
         addAnnotation(ImageStampAnnotation(image: image, bounds: bounds, isSignature: isSignature), to: page, actionName: isSignature ? "簽名" : "插入圖片")
     }
