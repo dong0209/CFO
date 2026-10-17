@@ -947,6 +947,12 @@ export function ImageEditor({ page, host, title, onDone }: { page: EditorPage; h
   useEffect(() => {
     const onCommand = (event: Event) => {
       const command = (event as CustomEvent<string>).detail;
+      // 正在輸入文字時，復原、重做的是文字欄位的內容
+      const active = document.activeElement as HTMLElement | null;
+      if ((command === "undo" || command === "redo") && (active?.tagName === "TEXTAREA" || (active?.tagName === "INPUT" && (active as HTMLInputElement).type === "number"))) {
+        document.execCommand(command);
+        return;
+      }
       if (command === "undo") undo();
       else if (command === "redo") redo();
       else if (command === "zoom-in") setView((v) => Math.min(6, v * 1.25));

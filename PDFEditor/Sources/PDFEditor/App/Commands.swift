@@ -1,4 +1,5 @@
 import AppKit
+import PDFEditorCore
 import SwiftUI
 
 struct FileCommands: Commands {
@@ -86,6 +87,11 @@ struct EditCommands: Commands {
 
     /// 正在編輯文字欄位時交給欄位本身復原，否則使用文件的復原紀錄。
     private func undoOrForward(redo: Bool) {
+        // 影像編輯器開啟時，復原的是編輯器裡的動作
+        if let editor = ImageEditorSession.active, editor.isKeyWindow {
+            editor.send(command: redo ? "redo" : "undo")
+            return
+        }
         if let responder = NSApp.keyWindow?.firstResponder as? NSTextView, responder.isEditable {
             NSApp.sendAction(redo ? Selector(("redo:")) : Selector(("undo:")), to: nil, from: nil)
             return
@@ -109,13 +115,13 @@ struct ViewCommands: Commands {
             Button(workspace.showSidebar ? "隱藏側欄" : "顯示側欄") { workspace.showSidebar.toggle() }
                 .keyboardShortcut("s", modifiers: [.command, .control])
             Divider()
-            Button("放大") { document?.pdfView?.zoomIn(nil) }
+            Button("放大") { if !forwardToImageEditor("zoom-in") { document?.pdfView?.zoomIn(nil) } }
                 .keyboardShortcut("=")
-            Button("縮小") { document?.pdfView?.zoomOut(nil) }
+            Button("縮小") { if !forwardToImageEditor("zoom-out") { document?.pdfView?.zoomOut(nil) } }
                 .keyboardShortcut("-")
-            Button("實際大小") { document?.pdfView?.scaleFactor = 1 }
+            Button("實際大小") { if !forwardToImageEditor("zoom-actual") { document?.pdfView?.scaleFactor = 1 } }
                 .keyboardShortcut("0")
-            Button("符合視窗") { document?.pdfView?.autoScales = true }
+            Button("符合視窗") { if !forwardToImageEditor("fit-page") { document?.pdfView?.autoScales = true } }
                 .keyboardShortcut("9")
             Divider()
             if let document {
@@ -222,4 +228,12 @@ struct ToolCommands: Commands {
             button
         }
     }
+}
+
+/// 影像編輯器開啟時，選單的縮放指令改給編輯器；回傳是否已轉送。
+@MainActor
+private func forwardToImageEditor(_ command: String) -> Bool {
+    guard let editor = ImageEditorSession.active, editor.isKeyWindow else { return false }
+    editor.send(command: command)
+    return true
 }

@@ -23,6 +23,24 @@ public final class ImageEditorSession: NSObject {
     /// 編輯期間保留自己（WKWebView 只弱參照訊息處理者）
     private var keepAlive: ImageEditorSession?
 
+    /// 目前開啟中的編輯器（選單的復原、重做要轉給它，而不是後方的文件）
+    public private(set) static weak var active: ImageEditorSession?
+
+    /// 編輯器視窗是否為目前的主要視窗
+    public var isKeyWindow: Bool { window?.isKeyWindow ?? false }
+
+    /// 把主程式選單的指令（undo、redo、zoom-in…）轉給編輯器。
+    public func send(command: String) {
+        guard let webView else { return }
+        Task { @MainActor in
+            _ = try? await webView.callAsyncJavaScript(
+                "window.dispatchEvent(new CustomEvent('app-command', { detail: command }));",
+                arguments: ["command": command],
+                contentWorld: .page
+            )
+        }
+    }
+
     public init(page: EditorPageImage, title: String) {
         self.page = page
         self.title = title
@@ -52,6 +70,7 @@ public final class ImageEditorSession: NSObject {
         self.webView = webView
         self.window = window
         keepAlive = self
+        Self.active = self
         webView.load(URLRequest(url: URL(string: "\(EngineSchemeHandler.scheme)://editor/index.html")!))
         if let parent {
             parent.beginSheet(window, completionHandler: nil)
@@ -79,6 +98,7 @@ public final class ImageEditorSession: NSObject {
         continuation?.resume(returning: result)
         continuation = nil
         keepAlive = nil
+        if Self.active === self { Self.active = nil }
     }
 
     // MARK: - 與網頁溝通

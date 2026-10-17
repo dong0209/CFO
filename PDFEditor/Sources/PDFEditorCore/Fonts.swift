@@ -78,35 +78,61 @@ public enum FontCatalog {
 /// 文字方塊（FreeText 註解）的建立與樣式設定。
 public enum FreeTextStyle {
     public static let maxWidth: CGFloat = 400
+    /// 文字與外框之間的留白（寬、高合計）
+    public static let padding = CGSize(width: 12, height: 8)
 
     /// 以左上角為基準，依文字與字型計算外框（PDF 座標，原點在左下）。
-    public static func bounds(for text: String, font: NSFont, topLeft: CGPoint) -> CGRect {
+    /// 提供頁面時，「左上角」與寬高以畫面方向計算（旋轉過的頁面上寬高互換）。
+    public static func bounds(for text: String, font: NSFont, topLeft: CGPoint, on page: PDFPage? = nil) -> CGRect {
         let measured = ((text.isEmpty ? " " : text) as NSString).boundingRect(
             with: CGSize(width: maxWidth, height: 10_000),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             attributes: [.font: font]
         )
-        let size = CGSize(width: ceil(measured.width) + 12, height: ceil(measured.height) + 8)
-        return CGRect(x: topLeft.x, y: topLeft.y - size.height, width: size.width, height: size.height)
+        let size = CGSize(width: ceil(measured.width) + padding.width, height: ceil(measured.height) + padding.height)
+        guard let page else {
+            return CGRect(x: topLeft.x, y: topLeft.y - size.height, width: size.width, height: size.height)
+        }
+        let transform = page.transform(for: .cropBox)
+        let corner = topLeft.applying(transform)
+        return CGRect(x: corner.x, y: corner.y - size.height, width: size.width, height: size.height).applying(transform.inverted())
     }
 
-    public static func make(text: String, font: NSFont, color: NSColor, topLeft: CGPoint) -> PDFAnnotation {
-        let annotation = PDFAnnotation(bounds: bounds(for: text, font: font, topLeft: topLeft), forType: .freeText, withProperties: nil)
+    /// 外框在畫面方向的左上角（頁面座標）。
+    public static func topLeft(of bounds: CGRect, on page: PDFPage?) -> CGPoint {
+        guard let page else { return CGPoint(x: bounds.minX, y: bounds.maxY) }
+        let transform = page.transform(for: .cropBox)
+        let display = bounds.applying(transform)
+        return CGPoint(x: display.minX, y: display.maxY).applying(transform.inverted())
+    }
+
+    /// 建立文字方塊；旋轉過的頁面使用以畫面方向繪製的文字方塊。
+    public static func make(text: String, font: NSFont, color: NSColor, topLeft: CGPoint, on page: PDFPage? = nil) -> PDFAnnotation {
+        let rect = bounds(for: text, font: font, topLeft: topLeft, on: page)
+        let annotation: PDFAnnotation
+        if let page, PageOperations.normalizedRotation(page.rotation) != 0 {
+            annotation = UprightTextBoxAnnotation(bounds: rect)
+        } else {
+            annotation = PDFAnnotation(bounds: rect, forType: .freeText, withProperties: nil)
+        }
         annotation.color = .clear
         annotation.alignment = .left
         let border = PDFBorder()
         border.lineWidth = 0
         annotation.border = border
-        apply(text: text, font: font, color: color, to: annotation)
-        return annotation
-    }
-
-    /// 套用文字、字型與顏色，並保持左上角位置。
-    public static func apply(text: String, font: NSFont, color: NSColor, to annotation: PDFAnnotation) {
-        let old = annotation.bounds
         annotation.contents = text
         annotation.font = font
         annotation.fontColor = color
-        annotation.bounds = bounds(for: text, font: font, topLeft: CGPoint(x: old.minX, y: old.maxY))
+        return annotation
+    }
+
+    /// 套用文字、字型與顏色，並保持左上角（畫面方向）位置。
+    public static func apply(text: String, font: NSFont, color: NSColor, to annotation: PDFAnnotation) {
+        let page = annotation.page
+        let corner = topLeft(of: annotation.bounds, on: page)
+        annotation.contents = text
+        annotation.font = font
+        annotation.fontColor = color
+        annotation.bounds = bounds(for: text, font: font, topLeft: corner, on: page)
     }
 }

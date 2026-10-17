@@ -155,7 +155,7 @@ final class EditorDocument: ObservableObject, Identifiable {
     /// 新增文字方塊（左上角對齊點選位置）。
     func addTextBox(_ text: String, font: NSFont, color: NSColor, at topLeft: CGPoint, on page: PDFPage) {
         guard !text.isEmpty else { return }
-        addAnnotation(FreeTextStyle.make(text: text, font: font, color: color, topLeft: topLeft), to: page, actionName: "文字方塊")
+        addAnnotation(FreeTextStyle.make(text: text, font: font, color: color, topLeft: topLeft, on: page), to: page, actionName: "文字方塊")
     }
 
     /// 修改文字方塊的內容、字型與顏色（可復原）。

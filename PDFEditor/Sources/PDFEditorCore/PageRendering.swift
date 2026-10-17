@@ -78,8 +78,11 @@ public enum PageRenderer {
             if let ref = page.pageRef {
                 context.drawPDFPage(ref)
             }
+            // 註解的 draw(with:in:) 預期畫面方向的座標系統（會自行套用 page.transform），這裡要的是頁面座標
+            let toPage = page.transform(for: .mediaBox).inverted()
             for annotation in page.annotations where include(annotation) {
                 context.saveGState()
+                context.concatenate(toPage)
                 annotation.draw(with: .mediaBox, in: context)
                 context.restoreGState()
             }

@@ -269,73 +269,49 @@ final class FontTests: XCTestCase {
         }
     }
 
-    @MainActor
-    func testDiagnosePDFKitAnnotationContext() throws {
-        final class Probe: PDFAnnotation {
-            var mode = 0
-            var log: [String] = []
-            override func draw(with box: PDFDisplayBox, in context: CGContext) {
-                guard let page else { return }
-                let t = page.transform(for: box)
-                log.append("box=\(box.rawValue) t=[\(t.a) \(t.b) \(t.c) \(t.d) \(t.tx) \(t.ty)] ctm=\(context.ctm)")
-                context.saveGState()
-                var rect = bounds
-                if mode == 1 { context.concatenate(t) }
-                if mode == 2 { rect = bounds.applying(t) }
-                context.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
-                context.fill(CGRect(x: rect.minX, y: rect.minY, width: rect.width / 2, height: rect.height))
-                context.setFillColor(red: 0, green: 0, blue: 1, alpha: 1)
-                context.fill(CGRect(x: rect.midX, y: rect.minY, width: rect.width / 2, height: rect.height))
-                context.restoreGState()
-            }
-        }
-        for mode in [1, 2] {
-            for rotation in [0, 90, 180, 270] {
-                let document = makeDocument(pages: 1, size: CGSize(width: 600, height: 800))
-                let page = try XCTUnwrap(document.page(at: 0))
-                page.rotation = rotation
-                let probe = Probe(bounds: CGRect(x: 100, y: 100, width: 200, height: 50), forType: .stamp, withProperties: nil)
-                probe.mode = mode
-                page.addAnnotation(probe)
-                let rendered = try XCTUnwrap(PageRenderer.image(for: page, dpi: 72))
-                let red = colorBox(rendered) { $0 > 200 && $1 < 60 && $2 < 60 }
-                let blue = colorBox(rendered) { $0 < 60 && $1 < 60 && $2 > 200 }
-                print("DIAG mode \(mode) rotation \(rotation): image \(rendered.width)x\(rendered.height) red \(String(describing: red?.box)) blue \(String(describing: blue?.box)) \(probe.log)")
-
-                // PDFView 實際顯示
-                probe.log = []
-                let view = PDFView(frame: CGRect(x: 0, y: 0, width: 1000, height: 1000))
-                view.displayMode = .singlePage
-                view.displaysPageBreaks = false
-                view.autoScales = false
-                view.document = document
-                view.scaleFactor = 1
-                view.layoutSubtreeIfNeeded()
-                if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
-                    view.cacheDisplay(in: view.bounds, to: rep)
-                    if let image = rep.cgImage {
-                        let vr = colorBox(image) { $0 > 200 && $1 < 60 && $2 < 60 }
-                        let vb = colorBox(image) { $0 < 60 && $1 < 60 && $2 > 200 }
-                        let text = colorBox(image) { $0 < 60 && $1 < 60 && $2 < 60 }
-                        print("DIAG-VIEW mode \(mode) rotation \(rotation): \(image.width)x\(image.height) red \(String(describing: vr?.box)) blue \(String(describing: vb?.box)) text \(String(describing: text?.box)) \(probe.log)")
-                    }
-                }
-            }
-        }
-    }
-
     func testFreeTextIsUprightOnRotatedPages() throws {
         for rotation in [0, 90, 180, 270] {
             let document = makeDocument(pages: 1, size: CGSize(width: 600, height: 800))
             let page = try XCTUnwrap(document.page(at: 0))
             page.rotation = rotation
             let font = FontCatalog.font(family: "Helvetica", face: nil, size: 30)
-            let annotation = FreeTextStyle.make(text: "WWWWWWWWWW", font: font, color: NSColor(red: 0, green: 0.8, blue: 0, alpha: 1), topLeft: CGPoint(x: 100, y: 500))
+            // 點選位置：畫面左上角附近
+            let click = CGPoint(x: 100, y: 120).applying(page.transform(for: .cropBox).inverted())
+            let annotation = FreeTextStyle.make(text: "WWWWWWWWWW", font: font, color: NSColor(red: 0, green: 0.8, blue: 0, alpha: 1), topLeft: click, on: page)
             page.addAnnotation(annotation)
-            let rendered = try XCTUnwrap(PageRenderer.image(for: page, dpi: 72))
-            let text = try XCTUnwrap(colorBox(rendered) { $0 < 80 && $1 > 150 && $2 < 80 })
-            print("FreeText rotation \(rotation): annotation bounds \(annotation.bounds), rendered box \(text.box)")
-            XCTAssertGreaterThan(text.box.width, text.box.height * 2, "旋轉 \(rotation)°：文字方塊應是水平的")
+            FreeTextStyle.apply(text: "WWWWWWWWWWWW", font: font, color: NSColor(red: 0, green: 0.8, blue: 0, alpha: 1), to: annotation)
+
+            for (label, target) in [("畫面", page), ("存檔前固定到頁面", try XCTUnwrap(rotation == 0 ? page : PageFlattener.bakeCustomAnnotations(page)?.newPage))] {
+                let rendered = try XCTUnwrap(PageRenderer.image(for: target, dpi: 72))
+                let text = try XCTUnwrap(colorBox(rendered) { $0 < 80 && $1 > 150 && $2 < 80 }, "旋轉 \(rotation)°（\(label)）")
+                XCTAssertGreaterThan(text.box.width, text.box.height * 2, "旋轉 \(rotation)°（\(label)）：文字方塊應是水平的")
+                // 左上角在點選的位置（畫面座標，原點在左上）
+                let expectedTop = Double(rendered.height) - 120
+                XCTAssertEqual(text.box.minX, 100, accuracy: 12, "旋轉 \(rotation)°（\(label)）")
+                XCTAssertEqual(text.box.minY, expectedTop, accuracy: 14, "旋轉 \(rotation)°（\(label)）")
+            }
+            if rotation != 0 {
+                let baked = try XCTUnwrap(PageFlattener.bakeCustomAnnotations(page)?.newPage)
+                XCTAssertTrue((baked.string ?? "").contains("WWWWWWWWWWWW"), "固定到頁面後文字可搜尋")
+            }
+        }
+    }
+
+    func testFlattenKeepsAnnotationPositionOnRotatedPages() throws {
+        for rotation in [90, 270] {
+            let document = makeDocument(pages: 1, size: CGSize(width: 600, height: 800))
+            let page = try XCTUnwrap(document.page(at: 0))
+            page.rotation = rotation
+            let square = PDFAnnotation(bounds: CGRect(x: 100, y: 100, width: 200, height: 50), forType: .square, withProperties: nil)
+            square.color = .clear
+            square.interiorColor = NSColor(red: 1, green: 0, blue: 0, alpha: 1)
+            page.addAnnotation(square)
+            let before = try XCTUnwrap(colorBox(try XCTUnwrap(PageRenderer.image(for: page, dpi: 72))) { $0 > 200 && $1 < 60 && $2 < 60 })
+            let flattened = try XCTUnwrap(PageFlattener.flattenAll(page)?.newPage)
+            let after = try XCTUnwrap(colorBox(try XCTUnwrap(PageRenderer.image(for: flattened, dpi: 72))) { $0 > 200 && $1 < 60 && $2 < 60 })
+            XCTAssertEqual(after.box.minX, before.box.minX, accuracy: 2, "旋轉 \(rotation)°")
+            XCTAssertEqual(after.box.minY, before.box.minY, accuracy: 2, "旋轉 \(rotation)°")
+            XCTAssertEqual(after.box.width, before.box.width, accuracy: 2, "旋轉 \(rotation)°")
         }
     }
 

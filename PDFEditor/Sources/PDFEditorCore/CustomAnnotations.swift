@@ -17,21 +17,11 @@ open class CustomDrawnAnnotation: PDFAnnotation {
     /// 是否允許使用者以滑鼠拖曳移動。
     open var isUserMovable: Bool { true }
 
-    /// 以「畫面方向」繪製：頁面旋轉時先反向旋轉座標系，內容在畫面上才會是正的。
-    /// `draw` 收到的是畫面方向下、與 `rect` 同一位置的外框（旋轉 90°／270° 時寬高互換）。
-    public func drawUpright(in context: CGContext, rect: CGRect, _ draw: (CGRect) -> Void) {
-        let rotation = PageOperations.normalizedRotation(page?.rotation ?? 0)
-        guard rotation != 0 else {
-            draw(rect)
-            return
-        }
-        let sideways = rotation % 180 != 0
-        let size = sideways ? CGSize(width: rect.height, height: rect.width) : rect.size
-        context.saveGState()
-        context.translateBy(x: rect.midX, y: rect.midY)
-        context.rotate(by: CGFloat(rotation) * .pi / 180)
-        draw(CGRect(x: -size.width / 2, y: -size.height / 2, width: size.width, height: size.height))
-        context.restoreGState()
+    /// PDFKit 呼叫 `draw(with:in:)` 時，座標系統是「畫面方向」（已套用頁面旋轉與裁切位移），
+    /// 頁面座標要經 `page.transform(for:)` 換算。回傳外框在畫面方向下的位置，內容直接畫在其中就會是正的。
+    public func displayRect(_ rect: CGRect, for box: PDFDisplayBox) -> CGRect {
+        guard let page else { return rect }
+        return rect.applying(page.transform(for: box))
     }
 }
 
@@ -54,7 +44,7 @@ public final class ImageStampAnnotation: CustomDrawnAnnotation {
     public override func draw(with box: PDFDisplayBox, in context: CGContext) {
         context.saveGState()
         context.interpolationQuality = .high
-        drawUpright(in: context, rect: bounds) { context.draw(image, in: $0) }
+        context.draw(image, in: displayRect(bounds, for: box))
         context.restoreGState()
     }
 }
@@ -91,11 +81,10 @@ public final class WatermarkAnnotation: CustomDrawnAnnotation {
         let size = attributed.size()
         context.saveGState()
         context.setAlpha(opacity)
-        drawUpright(in: context, rect: bounds) { rect in
-            context.translateBy(x: rect.midX, y: rect.midY)
-            context.rotate(by: angle * .pi / 180)
-            TextDrawing.draw(attributed, at: CGPoint(x: -size.width / 2, y: -size.height / 2), in: context)
-        }
+        let rect = displayRect(bounds, for: box)
+        context.translateBy(x: rect.midX, y: rect.midY)
+        context.rotate(by: angle * .pi / 180)
+        TextDrawing.draw(attributed, at: CGPoint(x: -size.width / 2, y: -size.height / 2), in: context)
         context.restoreGState()
     }
 }
@@ -164,12 +153,32 @@ public final class TextStampAnnotation: CustomDrawnAnnotation {
             .foregroundColor: textColor,
         ])
         // 位置以畫面方向計算：旋轉的頁面上頁碼仍在畫面的下方
-        context.saveGState()
-        drawUpright(in: context, rect: bounds) { rect in
-            let origin = position.origin(for: attributed.size(), in: rect, margin: margin)
-            TextDrawing.draw(attributed, at: origin, in: context)
-        }
-        context.restoreGState()
+        let origin = position.origin(for: attributed.size(), in: displayRect(bounds, for: box), margin: margin)
+        TextDrawing.draw(attributed, at: origin, in: context)
+    }
+}
+
+/// 旋轉過的頁面上的文字方塊：PDFKit 的文字方塊會跟著頁面一起轉（在畫面上側躺），
+/// 這裡改以畫面方向繪製；存檔時與圖片一樣固定到頁面中（成為可搜尋、可用「編輯文字」修改的文字）。
+public final class UprightTextBoxAnnotation: CustomDrawnAnnotation {
+    public init(bounds: CGRect) {
+        super.init(bounds: bounds, forType: .freeText, withProperties: nil)
+    }
+
+    public required init?(coder: NSCoder) {
+        return nil
+    }
+
+    public override func draw(with box: PDFDisplayBox, in context: CGContext) {
+        let attributed = NSAttributedString(string: contents ?? "", attributes: [
+            .font: font ?? TextDrawing.font(size: 14, bold: false),
+            .foregroundColor: fontColor ?? .black,
+        ])
+        let rect = displayRect(bounds, for: box).insetBy(dx: FreeTextStyle.padding.width / 2, dy: FreeTextStyle.padding.height / 2)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        attributed.draw(with: rect, options: [.usesLineFragmentOrigin, .usesFontLeading])
+        NSGraphicsContext.restoreGraphicsState()
     }
 }
 
