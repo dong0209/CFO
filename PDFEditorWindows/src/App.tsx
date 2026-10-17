@@ -104,8 +104,10 @@ export function App() {
   // Ctrl+C 複製選取的 PDF 文字
   useEffect(() => {
     const onCopy = (e: ClipboardEvent) => {
-      if (isEditable(e.target) || window.getSelection()?.toString()) return;
+      if (isEditable(e.target)) return;
       const selection = activeTab()?.textSelection;
+      // 沒有選取 PDF 文字時，才讓瀏覽器複製介面上選取的文字（例如對話框內容）
+      if (!selection?.text && window.getSelection()?.toString()) return;
       if (selection?.text) {
         e.clipboardData?.setData("text/plain", selection.text);
         e.preventDefault();

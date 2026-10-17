@@ -79,7 +79,9 @@ textarea { width: 100%; resize: vertical; }
 .error { color: var(--danger); font-size: 12px; margin: 4px 0; }
 kbd { font-family: inherit; font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; margin-left: auto; }
 
-.app { display: flex; flex-direction: column; height: 100%; }
+.app { display: flex; flex-direction: column; height: 100%; user-select: none; }
+/* 介面文字不可被選取（避免拖曳選取 PDF 文字時順便選到工具列或狀態列）；輸入欄位與對話框內容仍可選取 */
+.app input, .app textarea, .app .dialog p, .app .hint, .app .annot-text p { user-select: text; }
 
 /* 分頁列 */
 .tabbar { display: flex; align-items: flex-end; gap: 2px; padding: 6px 8px 0; background: var(--bg); overflow-x: auto; flex: none; }
