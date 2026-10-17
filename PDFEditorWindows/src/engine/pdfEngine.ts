@@ -4,7 +4,7 @@ import { cleanFontName, type FontRequest, fontRequestFor, isReliableText, ocrFon
 import { chunk, moveItems, renderPageNumber } from "./pageRanges";
 import type {
   AnnotInfo, DocInfo, ImageFormat, LinkInfo, MarkupKind, Matrix, OcrLine, OpenResult, OutlineNode,
-  PageInfo, PageNumberOptions, Point, Quad, Rect, RenderResult, RGB, SaveOptions, SearchHit, ShapeKind,
+  CompressLevel, PageInfo, PageNumberOptions, Point, Quad, Rect, RenderResult, RGB, SaveOptions, SearchHit, ShapeKind,
   EditorPageImage, FontData, ImageEditObject, ImageEditResult,
   TextBoxStyle, TextLine, TextSelection, WatermarkOptions, WidgetInfo, WidgetKind,
 } from "./types";
@@ -1478,6 +1478,38 @@ export class PdfEngine {
     return output;
   }
 
+  /** 移除開啟密碼與擁有者權限限制，輸出沒有加密的版本（文件必須已能開啟）。 */
+  removeSecurity(id: number): Uint8Array {
+    return this.save(id, {});
+  }
+
+  /**
+   * 壓縮檔案大小：把超過目標解析度的影像降採樣並重新以 JPEG 編碼，再清理與壓縮串流。
+   * 在副本上進行，正在編輯的文件與其復原紀錄保持不變。`security` 省略時輸出不加密的版本。
+   */
+  compress(id: number, level: CompressLevel = "medium", security: SaveOptions = {}): Uint8Array {
+    const doc = this.doc(id);
+    const entry = this.entry(id);
+    const copy = mupdf.Document.openDocument(doc.saveToBuffer("").asUint8Array().slice(), "application/pdf").asPDF();
+    if (!copy) throw new Error("無法壓縮文件");
+    if (copy.needsPassword() && !copy.authenticatePassword(entry.password ?? "")) throw new Error("無法壓縮受密碼保護的文件");
+    try {
+      const { dpi, quality } = COMPRESS_LEVELS[level];
+      downsampleImages(copy, dpi, quality);
+      const flags = ["garbage=deduplicate", "compress", "compress-images", "compress-fonts", "clean"];
+      if (security.userPassword || security.ownerPassword) {
+        flags.push("encrypt=aes-256");
+        if (security.userPassword) flags.push(`user-password=${escapeOption(security.userPassword)}`);
+        flags.push(`owner-password=${escapeOption(security.ownerPassword || security.userPassword || "")}`);
+      } else {
+        flags.push("encrypt=none");
+      }
+      return copy.saveToBuffer(flags.join(",")).asUint8Array().slice();
+    } finally {
+      copy.destroy();
+    }
+  }
+
   exportPageImage(id: number, pageIndex: number, dpi: number, format: ImageFormat, quality = 90): Uint8Array {
     const page = this.page(id, pageIndex);
     const scale = dpi / 72;
@@ -1556,6 +1588,66 @@ function ellipsePath(x: number, y: number, w: number, h: number): string {
 
 /** 取樣顏色時的渲染倍率。 */
 const SAMPLE_SCALE = 2;
+
+/** 壓縮強度對應的目標影像解析度（dpi）與 JPEG 品質。 */
+const COMPRESS_LEVELS: Record<CompressLevel, { dpi: number; quality: number }> = {
+  low: { dpi: 220, quality: 82 },
+  medium: { dpi: 150, quality: 72 },
+  high: { dpi: 100, quality: 60 },
+};
+
+/**
+ * 把頁面上超過目標解析度的影像降採樣並重新以 JPEG 編碼（直接在傳入的文件上修改）。
+ * 只處理一般的彩色／灰階影像；帶遮罩（透明度）或 CMYK 的影像為了安全跳過不動。
+ */
+function downsampleImages(doc: mupdf.PDFDocument, targetDpi: number, quality: number) {
+  const count = doc.countPages();
+  for (let i = 0; i < count; i++) {
+    const page = doc.loadPage(i);
+    const { images } = scanPage(page, true);
+    // 以原始像素大小分組，取同尺寸影像在頁面上最大的擺放尺寸決定目標解析度
+    const buckets = new Map<string, { image: mupdf.Image; w: number; h: number; longPts: number }>();
+    for (const { image, ctm } of images) {
+      const w = image.getWidth();
+      const h = image.getHeight();
+      const longPts = Math.max(Math.hypot(ctm[0], ctm[1]), Math.hypot(ctm[2], ctm[3]));
+      const key = `${w}x${h}`;
+      const existing = buckets.get(key);
+      if (!existing || longPts > existing.longPts) buckets.set(key, { image, w, h, longPts });
+    }
+    const resources = resolved(page.getObject().getInheritable("Resources"));
+    for (const { image, w, h, longPts } of buckets.values()) {
+      if (longPts <= 0) continue;
+      const targetLong = Math.round((longPts / 72) * targetDpi);
+      const longPx = Math.max(w, h);
+      // 只在能明顯縮小、且影像夠大時才處理（避免動到小圖示與已經夠小的影像）
+      if (targetLong >= longPx * 0.85 || longPx < 400 || w * h < 160_000) continue;
+      if (image.getImageMask()) continue;
+      const found = findImageXObject(resources, w, h, 0);
+      if (!found) continue;
+      const obj = found.xobjects.get(found.name);
+      if (!obj.get("SMask").isNull() || !obj.get("Mask").isNull()) continue;
+      let pixmap: mupdf.Pixmap | null = null;
+      let scaled: mupdf.Pixmap | null = null;
+      try {
+        pixmap = image.toPixmap();
+        if (pixmap.getAlpha() || ![1, 3].includes(pixmap.getNumberOfComponents())) continue;
+        const scale = targetLong / longPx;
+        const tw = Math.max(1, Math.round(w * scale));
+        const th = Math.max(1, Math.round(h * scale));
+        // warp 以來源四角（左上、右上、右下、左下）重新取樣到 tw×th，保持原本的上下方向
+        scaled = pixmap.warp([[0, 0], [w, 0], [w, h], [0, h]], tw, th);
+        const jpeg = scaled.asJPEG(quality, false);
+        found.xobjects.put(found.name, doc.addImage(new mupdf.Image(jpeg)));
+      } catch {
+        // 單張影像處理失敗時略過，不影響其他影像
+      } finally {
+        scaled?.destroy();
+        pixmap?.destroy();
+      }
+    }
+  }
+}
 
 /** 解析間接參照；null 物件直接回傳（MuPDF 的 null 物件無法 resolve）。 */
 function resolved(obj: mupdf.PDFObject): mupdf.PDFObject {

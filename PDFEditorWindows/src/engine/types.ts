@@ -136,6 +136,9 @@ export interface SaveOptions {
   compress?: boolean;
 }
 
+/** 壓縮強度：低（畫質優先）、中（平衡）、高（檔案最小） */
+export type CompressLevel = "low" | "medium" | "high";
+
 export type ImageFormat = "png" | "jpeg";
 
 /** 可直接編輯的文字行 */

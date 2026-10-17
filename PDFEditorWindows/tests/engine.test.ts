@@ -1,7 +1,7 @@
 import * as mupdf from "mupdf";
 import { beforeEach, describe, expect, it } from "vitest";
 import { latinFontFor, PdfEngine } from "../src/engine/pdfEngine";
-import { formPdf, makePdf, makePng, makeStyledPdf } from "./helpers";
+import { formPdf, makePdf, makePng, makeStyledPdf, photoPdf } from "./helpers";
 
 const texts = (engine: PdfEngine, id: number) =>
   Array.from({ length: engine.info(id).pageCount }, (_, i) => engine.pageText(id, i).trim());
@@ -267,6 +267,37 @@ describe("搜尋、書籤、表單與存檔", () => {
     const plain = engine.open(engine.save(opened.id));
     expect(plain.needsPassword).toBe(false);
     expect(engine.info(plain.id).isEncrypted).toBe(false);
+  });
+
+  it("壓縮：影像降採樣、保留文字與方向、檔案可開啟", () => {
+    const { id } = engine.open(photoPdf());
+    const out = engine.compress(id, "high");
+    const outDoc = mupdf.Document.openDocument(out, "application/pdf").asPDF()!;
+    let maxW = 0;
+    const page = outDoc.loadPage(0) as mupdf.PDFPage;
+    page.getObject().getInheritable("Resources").get("XObject").forEach((v: mupdf.PDFObject) => {
+      if (v.get("Subtype").asName() === "Image") maxW = Math.max(maxW, v.get("Width").asNumber());
+    });
+    expect(maxW, "影像應降採樣到約 100dpi（約 694px）").toBeGreaterThan(500);
+    expect(maxW).toBeLessThan(1000);
+    const re = engine.open(out).id;
+    expect(engine.pageText(re, 0)).toContain("Compress Test");
+    const { pixels, width } = engine.render(re, 0, 1);
+    const at = (x: number, y: number) => Array.from(pixels.slice((y * width + x) * 4, (y * width + x) * 4 + 3));
+    expect(at(300, 160)[0]).toBeGreaterThan(at(300, 160)[2]); // 上部偏紅，方向未顛倒
+    expect(at(300, 520)[2]).toBeGreaterThan(at(300, 520)[0]); // 下部偏藍
+  });
+
+  it("移除密碼與權限限制", () => {
+    const { id } = engine.open(makePdf(1));
+    const encrypted = engine.save(id, { userPassword: "pw", ownerPassword: "owner" });
+    const opened = engine.open(encrypted);
+    expect(opened.needsPassword).toBe(true);
+    expect(engine.unlock(opened.id, "pw")).toBe(true);
+    const plain = engine.open(engine.removeSecurity(opened.id));
+    expect(plain.needsPassword).toBe(false);
+    expect(engine.info(plain.id).isEncrypted).toBe(false);
+    expect(texts(engine, plain.id)).toEqual(["Page 1"]);
   });
 
   it("匯出圖片與文字", () => {

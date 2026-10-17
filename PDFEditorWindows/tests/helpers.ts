@@ -159,3 +159,29 @@ export function formPdf(): Uint8Array {
   out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
   return new TextEncoder().encode(out);
 }
+
+/** 含一張大照片（上紅下藍、帶雜訊）與文字「Compress Test」的 PDF，用來測試壓縮。 */
+export function photoPdf(px = 1600): Uint8Array {
+  const doc = new mupdf.PDFDocument();
+  const font = doc.addSimpleFont(new mupdf.Font("Helvetica"));
+  const pm = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, [0, 0, px, px], false);
+  const data = pm.getPixels();
+  for (let y = 0; y < px; y++)
+    for (let x = 0; x < px; x++) {
+      const i = (y * px + x) * 3;
+      const n = (x * 131 + y * 57) % 64;
+      if (y < px / 2) {
+        data[i] = 200 + (n % 40);
+        data[i + 1] = 20 + n;
+        data[i + 2] = 20 + (n % 30);
+      } else {
+        data[i] = 20 + (n % 30);
+        data[i + 1] = 20 + n;
+        data[i + 2] = 200 + (n % 40);
+      }
+    }
+  const img = doc.addImage(new mupdf.Image(pm));
+  const content = "q 500 0 0 500 50 250 cm /Im Do Q\nBT /F1 24 Tf 60 60 Td (Compress Test) Tj ET";
+  doc.insertPage(0, doc.addPage([0, 0, 595, 842], 0, { Font: { F1: font }, XObject: { Im: img } }, content));
+  return doc.saveToBuffer("compress").asUint8Array().slice();
+}
