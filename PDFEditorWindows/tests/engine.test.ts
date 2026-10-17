@@ -244,6 +244,16 @@ describe("搜尋、書籤、表單與存檔", () => {
     expect(engine.widgets(id, 0).map((w) => w.value)).toEqual(["", "Off", ""]);
   });
 
+  it("插入受密碼保護的 PDF：需要正確密碼", () => {
+    const { id } = engine.open(makePdf(1));
+    const locked = engine.save(engine.open(makePdf(2)).id, { userPassword: "pw" });
+    expect(() => engine.insertDocument(id, 1, locked, null)).toThrow();
+    expect(() => engine.insertDocument(id, 1, locked, "wrong")).toThrow();
+    expect(engine.info(id).pageCount).toBe(1);
+    expect(engine.insertDocument(id, 1, locked, "pw")).toBe(2);
+    expect(texts(engine, engine.open(engine.save(id)).id)).toEqual(["Page 1", "Page 1", "Page 2"]);
+  });
+
   it("加密、解鎖與移除密碼", () => {
     const { id } = engine.open(makePdf(2));
     const encrypted = engine.save(id, { userPassword: "1234" });
