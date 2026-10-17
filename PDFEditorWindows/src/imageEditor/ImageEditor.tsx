@@ -868,7 +868,8 @@ export function ImageEditor({ page, host, title, onDone }: { page: EditorPage; h
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      const typing = target.tagName === "TEXTAREA" || (target.tagName === "INPUT" && !["range", "checkbox", "color", "button"].includes((target as HTMLInputElement).type));
+      // 在文字欄位或下拉選單中按鍵時，不觸發工具快捷鍵
+      const typing = target.tagName === "TEXTAREA" || target.tagName === "SELECT" || (target.tagName === "INPUT" && !["range", "checkbox", "color", "button"].includes((target as HTMLInputElement).type));
       const mod = e.ctrlKey || e.metaKey;
       if (confirmCancel || busy) return;
       if (mod && e.key.toLowerCase() === "z" && !typing) {

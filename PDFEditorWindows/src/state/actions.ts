@@ -212,6 +212,11 @@ export async function refresh(key: string, { dirty = true }: { dirty?: boolean }
     searchHits: [],
     textSelection: null,
   }));
+  // 內容改變後重新搜尋，搜尋結果才不會指向舊的位置或顯示「找不到」
+  if (tab.searchQuery.trim()) {
+    const hits = await engine.search(tab.engineId, tab.searchQuery).catch(() => []);
+    updateTab(key, (t) => (t.searchQuery === tab.searchQuery ? { searchHits: hits, searchIndex: Math.min(t.searchIndex, Math.max(0, hits.length - 1)) } : {}));
+  }
 }
 
 /** 對目前文件執行引擎操作，完成後重新整理。 */
