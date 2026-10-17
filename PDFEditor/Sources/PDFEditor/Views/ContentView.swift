@@ -48,14 +48,24 @@ struct ContentView: View {
         }
     }
 
+    /// 一次拖入多個檔案時全部讀完再開啟，多張圖片才會合成同一份 PDF。
     private func loadDroppedURLs(_ providers: [NSItemProvider]) {
-        for provider in providers {
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var urls: [(Int, URL)] = []
+        for (index, provider) in providers.enumerated() {
+            group.enter()
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                guard let url else { return }
-                DispatchQueue.main.async {
-                    Workspace.shared.open([url])
+                if let url {
+                    lock.lock()
+                    urls.append((index, url))
+                    lock.unlock()
                 }
+                group.leave()
             }
+        }
+        group.notify(queue: .main) {
+            Workspace.shared.open(urls.sorted { $0.0 < $1.0 }.map(\.1))
         }
     }
 }

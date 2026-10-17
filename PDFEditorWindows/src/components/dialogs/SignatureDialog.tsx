@@ -156,6 +156,9 @@ function SignatureDialog({ done }: { done: (v: void) => void }) {
             <option value={5}>粗</option>
           </select>
         </label>
+        <button onClick={() => setStrokes(strokes.slice(0, -1))} disabled={!strokes.length}>
+          復原一筆
+        </button>
         <button onClick={() => setStrokes([])} disabled={!strokes.length}>
           清除
         </button>

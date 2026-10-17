@@ -133,6 +133,8 @@ struct SignatureSheet: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 160)
+                Button("復原一筆") { strokes.removeLast() }
+                    .disabled(strokes.isEmpty)
                 Button("清除") { strokes = [] }
                     .disabled(strokes.isEmpty)
                 Spacer()
