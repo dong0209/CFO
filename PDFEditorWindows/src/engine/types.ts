@@ -162,6 +162,8 @@ export interface TextLine {
   textReliable: boolean;
   /** OCR 辨識出的隱形文字（看得見的字形在掃描影像中） */
   ocr: boolean;
+  /** 文字方向（逆時針角度：0、90、180、270；旋轉過的頁面不是 0） */
+  angle: number;
 }
 
 // MARK: - 影像編輯模式

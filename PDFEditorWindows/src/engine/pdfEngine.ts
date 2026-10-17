@@ -588,14 +588,16 @@ export class PdfEngine {
 
   /** 在每個選取頁面後方插入複本。 */
   duplicatePages(id: number, indices: number[]): void {
-    const doc = this.doc(id);
-    const selected = new Set(indices);
-    const order: number[] = [];
-    for (let i = 0; i < doc.countPages(); i++) {
-      order.push(i);
-      if (selected.has(i)) order.push(i);
-    }
-    this.op(id, "複製頁面", () => doc.rearrangePages(order));
+    const sorted = [...new Set(indices)].sort((a, b) => b - a);
+    this.op(id, "複製頁面", (doc) => {
+      // 經由暫存文件完整複製（含註解），複本與原頁是各自獨立的頁面物件
+      for (const index of sorted) {
+        const temp = new mupdf.PDFDocument();
+        temp.newGraftMap().graftPage(0, doc, index);
+        doc.newGraftMap().graftPage(index + 1, temp, 0);
+        temp.destroy();
+      }
+    });
   }
 
   extractPages(id: number, indices: number[]): Uint8Array {
@@ -828,10 +830,13 @@ export class PdfEngine {
     const entry = this.entry(id);
     const page = this.page(id, pageIndex);
     const toUser = invert(page.getTransform() as Matrix);
-    const raw: Array<{ bbox: Rect; horizontal: boolean; chars: Array<{ c: string; origin: Point; font: mupdf.Font; size: number; color: number[] }> }> = [];
+    const raw: Array<{ bbox: Rect; angle: number | null; chars: Array<{ c: string; origin: Point; font: mupdf.Font; size: number; color: number[] }> }> = [];
     page.toStructuredText("preserve-whitespace").walk({
       beginLine(bbox, _wmode, direction) {
-        raw.push({ bbox: bbox as Rect, horizontal: Math.abs(direction[1]) < 0.01 && direction[0] > 0, chars: [] });
+        // 只處理沿座標軸的文字行（旋轉 0°／90°／180°／270° 的頁面，例如掃描後轉向的頁面）
+        const [dx, dy] = direction;
+        const axis = Math.abs(dx) < 0.01 || Math.abs(dy) < 0.01;
+        raw.push({ bbox: bbox as Rect, angle: axis ? (Math.round((Math.atan2(-dy, dx) * 180) / Math.PI / 90) * 90 + 360) % 360 : null, chars: [] });
       },
       onChar(c, origin, font, size, _quad, color) {
         raw[raw.length - 1]?.chars.push({ c, origin: origin as Point, font, size, color: color as number[] });
@@ -844,7 +849,7 @@ export class PdfEngine {
     const lines: AnalyzedLine[] = [];
     for (const line of raw) {
       const text = line.chars.map((ch) => ch.c).join("");
-      if (!line.horizontal || !text.trim()) continue;
+      if (line.angle === null || !text.trim()) continue;
       const visibleChars = line.chars.filter((ch) => ch.c.trim());
       const first = visibleChars[0] ?? line.chars[0];
       const hidden = visibleChars.filter((ch) => invisible.has(pointKey(ch.origin))).length;
@@ -888,6 +893,7 @@ export class PdfEngine {
         embeddedFont: !ocr && embedded,
         textReliable: isReliableText(text),
         ocr,
+        angle: line.angle ?? 0,
         dict: ocr ? null : dict,
       });
     }
@@ -1017,7 +1023,7 @@ export class PdfEngine {
       if (line.ocr) {
         const pageBounds = page.getBounds();
         const pageArea = (pageBounds[2] - pageBounds[0]) * (pageBounds[3] - pageBounds[1]);
-        if ((x1 - x0) * (y1 - y0) > pageArea * 0.15 || y1 - y0 > 120) {
+        if ((x1 - x0) * (y1 - y0) > pageArea * 0.15 || Math.min(x1 - x0, y1 - y0) > 120) {
           throw new Error("這一行的範圍太大（可能是 OCR 把一整塊辨識成一行）。請用拖曳框選範圍重新辨識，一次框選一行或一個區塊。");
         }
         // 隱形的 OCR 文字整行移除；看得見的字形在掃描影像中，改掉影像中那一行的像素
@@ -1029,17 +1035,19 @@ export class PdfEngine {
         const area: Rect = [x0 - pad, y0 - pad, x1 + pad, y1 + pad];
         if (!this.eraseInImages(doc, page, area)) this.paintBackground(doc, page, area);
       } else {
-        const inset = (y1 - y0) * 0.2;
+        // 只移除這一行的字形：沿著與文字垂直的方向內縮，避免碰到上下相鄰的行
+        const vertical = line.angle === 90 || line.angle === 270;
+        const inset = (vertical ? x1 - x0 : y1 - y0) * 0.2;
         const redact = page.createAnnotation("Redact");
-        redact.setRect([x0, y0 + inset, x1, y1 - inset]);
+        redact.setRect(vertical ? [x0 + inset, y0, x1 - inset, y1] : [x0, y0 + inset, x1, y1 - inset]);
         redact.update();
         redact.applyRedaction(0, mupdf.PDFPage.REDACT_IMAGE_NONE, mupdf.PDFPage.REDACT_LINE_ART_NONE, mupdf.PDFPage.REDACT_TEXT_REMOVE);
       }
       if (text && codes && originalDict && line.dict) {
-        this.appendEncodedText(doc, page, textMatrix(line.origin, style.size), style.color, line.dict, codes, "edit");
+        this.appendEncodedText(doc, page, textMatrix(line.origin, style.size, line.angle), style.color, line.dict, codes, "edit");
         fontUsed = "embedded";
       } else if (text) {
-        this.appendText(doc, page, [{ text, matrix: textMatrix(line.origin, style.size) }], style.color, 1, false, "edit", this.fontChain(style, primary));
+        this.appendText(doc, page, [{ text, matrix: textMatrix(line.origin, style.size, line.angle) }], style.color, 1, false, "edit", this.fontChain(style, primary));
       }
       return { font: fontUsed };
     });

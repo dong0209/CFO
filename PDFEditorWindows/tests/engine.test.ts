@@ -1,3 +1,4 @@
+import * as mupdf from "mupdf";
 import { beforeEach, describe, expect, it } from "vitest";
 import { latinFontFor, PdfEngine } from "../src/engine/pdfEngine";
 import { makePdf, makePng, makeStyledPdf } from "./helpers";
@@ -313,5 +314,45 @@ describe("直接編輯文字", () => {
     expect(latinFontFor({ bold: false, italic: false, serif: false, mono: false })).toBe("Helvetica");
     expect(latinFontFor({ bold: true, italic: true, serif: true, mono: false })).toBe("Times-BoldItalic");
     expect(latinFontFor({ bold: false, italic: true, serif: false, mono: true })).toBe("Courier-Oblique");
+  });
+});
+
+describe("頁面與旋轉", () => {
+  it("複製的頁面是獨立的頁面（修改其中一頁不影響複本）", () => {
+    const engine = new PdfEngine();
+    const { id } = engine.open(makePdf(2));
+    engine.duplicatePages(id, [0, 1]);
+    expect(engine.info(id).pageCount).toBe(4);
+    expect(engine.pageText(id, 1)).toContain("Page 1");
+    expect(engine.pageText(id, 3)).toContain("Page 2");
+    engine.addNote(id, 0, [100, 100], "只在第一頁", [1, 1, 0]);
+    expect(engine.annotations(id, 0)).toHaveLength(1);
+    expect(engine.annotations(id, 1)).toHaveLength(0);
+    const reopened = engine.open(engine.save(id)).id;
+    expect(engine.annotations(reopened, 1)).toHaveLength(0);
+    engine.undo(id);
+    engine.undo(id);
+    expect(engine.info(id).pageCount).toBe(2);
+  });
+
+  it("旋轉過的頁面（90°／180°／270°）也能直接修改文字", () => {
+    for (const rotation of [90, 180, 270] as const) {
+      const doc = new mupdf.PDFDocument();
+      const font = doc.addSimpleFont(new mupdf.Font("Helvetica"));
+      doc.insertPage(0, doc.addPage([0, 0, 595, 842], rotation, { Font: { F1: font } }, "BT /F1 24 Tf 72 742 Td (Rotated Page) Tj ET BT /F1 12 Tf 72 700 Td (Second line) Tj ET"));
+      const engine = new PdfEngine();
+      const { id } = engine.open(doc.saveToBuffer("").asUint8Array().slice());
+      const lines = engine.textLines(id, 0);
+      const target = lines.find((l) => l.text === "Rotated Page")!;
+      expect(target, `旋轉 ${rotation}°`).toBeTruthy();
+      expect(target.angle).toBe((360 - rotation) % 360);
+      engine.replaceTextLine(id, 0, target.index, "Changed 改過");
+      const after = engine.textLines(id, 0);
+      const changed = after.find((l) => l.text === "Changed 改過")!;
+      expect(changed.angle).toBe(target.angle);
+      // 寫在原本的位置
+      expect(Math.abs(changed.origin[0] - target.origin[0]) + Math.abs(changed.origin[1] - target.origin[1])).toBeLessThan(2);
+      expect(after.some((l) => l.text === "Second line")).toBe(true);
+    }
   });
 });

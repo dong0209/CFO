@@ -631,8 +631,10 @@ function InlineTextEditor({ line, scale, engineId, pageIndex, onDone }: {
   const fontSize = settings.size * scale;
   const fallbackFamily = line.mono ? '"Courier New", monospace' : line.serif ? '"Times New Roman", "PMingLiU", "MingLiU", serif' : 'Arial, "Microsoft JhengHei", sans-serif';
   const family = cssFamily ? `"${cssFamily}", ${fallbackFamily}` : fallbackFamily;
-  const width = Math.max((x1 - x0) * scale, value.length * fontSize * 0.62) + fontSize;
-  const height = Math.max((y1 - y0) * scale, fontSize * 1.2) + 4;
+  // 旋轉過的頁面上，直的文字行仍以水平的編輯框輸入
+  const vertical = line.angle === 90 || line.angle === 270;
+  const width = Math.max(vertical ? 0 : (x1 - x0) * scale, value.length * fontSize * 0.62) + fontSize;
+  const height = Math.max(vertical ? 0 : (y1 - y0) * scale, fontSize * 1.2) + 4;
   const statusText =
     status.state === "resolving"
       ? `正在尋找字型「${status.family}」…`
