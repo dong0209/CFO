@@ -17,6 +17,9 @@ open class CustomDrawnAnnotation: PDFAnnotation {
     /// 是否允許使用者以滑鼠拖曳移動。
     open var isUserMovable: Bool { true }
 
+    /// 複製頁面時使用的複本（PDFKit 無法複製自訂註解）。
+    open func duplicate() -> PDFAnnotation? { nil }
+
     /// PDFKit 呼叫 `draw(with:in:)` 時，座標系統是「畫面方向」（已套用頁面旋轉與裁切位移），
     /// 頁面座標要經 `page.transform(for:)` 換算。回傳外框在畫面方向下的位置，內容直接畫在其中就會是正的。
     public func displayRect(_ rect: CGRect, for box: PDFDisplayBox) -> CGRect {
@@ -39,6 +42,10 @@ public final class ImageStampAnnotation: CustomDrawnAnnotation {
 
     public required init?(coder: NSCoder) {
         return nil
+    }
+
+    public override func duplicate() -> PDFAnnotation? {
+        ImageStampAnnotation(image: image, bounds: bounds, isSignature: isSignature)
     }
 
     public override func draw(with box: PDFDisplayBox, in context: CGContext) {
@@ -69,6 +76,10 @@ public final class WatermarkAnnotation: CustomDrawnAnnotation {
 
     public required init?(coder: NSCoder) {
         return nil
+    }
+
+    public override func duplicate() -> PDFAnnotation? {
+        WatermarkAnnotation(pageBounds: bounds, text: text, fontSize: fontSize, color: textColor, opacity: opacity, angle: angle)
     }
 
     public override var isUserMovable: Bool { false }
@@ -145,6 +156,10 @@ public final class TextStampAnnotation: CustomDrawnAnnotation {
         return nil
     }
 
+    public override func duplicate() -> PDFAnnotation? {
+        TextStampAnnotation(pageBounds: bounds, text: text, fontSize: fontSize, color: textColor, position: position, margin: margin)
+    }
+
     public override var isUserMovable: Bool { false }
 
     public override func draw(with box: PDFDisplayBox, in context: CGContext) {
@@ -167,6 +182,16 @@ public final class UprightTextBoxAnnotation: CustomDrawnAnnotation {
 
     public required init?(coder: NSCoder) {
         return nil
+    }
+
+    public override func duplicate() -> PDFAnnotation? {
+        let copy = UprightTextBoxAnnotation(bounds: bounds)
+        copy.color = color
+        copy.border = border
+        copy.contents = contents
+        copy.font = font
+        copy.fontColor = fontColor
+        return copy
     }
 
     public override func draw(with box: PDFDisplayBox, in context: CGContext) {

@@ -106,6 +106,20 @@ final class RenderingTests: XCTestCase {
         XCTAssertEqual(image.height, 1200)
     }
 
+    func testCopiedPageKeepsCustomAnnotations() throws {
+        let document = makeDocument(pages: 1)
+        let page = try XCTUnwrap(document.page(at: 0))
+        let context = CGContext(data: nil, width: 4, height: 4, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        let image = try XCTUnwrap(context.makeImage())
+        page.addAnnotation(ImageStampAnnotation(image: image, bounds: CGRect(x: 10, y: 10, width: 40, height: 40), isSignature: true))
+        page.addAnnotation(WatermarkAnnotation(pageBounds: page.bounds(for: .cropBox), text: "機密", fontSize: 60, color: .red, opacity: 0.3, angle: 45))
+        let copy = PageOperations.copy(page)
+        XCTAssertFalse(copy === page)
+        XCTAssertEqual(copy.annotations.compactMap { $0 as? ImageStampAnnotation }.first?.isSignature, true, "複本應保留簽名")
+        XCTAssertTrue(copy.annotations.contains { $0 is WatermarkAnnotation }, "複本應保留浮水印")
+        XCTAssertEqual(page.annotations.filter { $0 is CustomDrawnAnnotation }.count, 2, "原頁面的註解不變")
+    }
+
     func testBakeCustomAnnotationsKeepsTextAndOtherAnnotations() throws {
         let document = makeDocument(pages: 1)
         let page = try XCTUnwrap(document.page(at: 0))

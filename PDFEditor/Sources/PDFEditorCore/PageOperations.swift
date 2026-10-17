@@ -21,7 +21,16 @@ public enum PageOperations {
         let custom = page.annotations.filter { $0 is CustomDrawnAnnotation || $0 is RedactionMarkAnnotation }
         custom.forEach { page.removeAnnotation($0) }
         defer { custom.forEach { page.addAnnotation($0) } }
-        return (page.copy() as? PDFPage) ?? page
+        guard let copy = page.copy() as? PDFPage else { return page }
+        // 圖片、簽名、浮水印、頁碼與遮蓋標記另外複製
+        for annotation in custom {
+            if let drawn = annotation as? CustomDrawnAnnotation, let duplicate = drawn.duplicate() {
+                copy.addAnnotation(duplicate)
+            } else if annotation is RedactionMarkAnnotation {
+                copy.addAnnotation(RedactionMarkAnnotation(bounds: annotation.bounds))
+            }
+        }
+        return copy
     }
 
     /// 旋轉角度正規化為 0、90、180、270。
