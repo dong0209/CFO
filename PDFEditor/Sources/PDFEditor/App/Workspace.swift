@@ -161,6 +161,9 @@ final class Workspace: ObservableObject {
             if pdf.isLocked, unlock(pdf, name: url.lastPathComponent) == nil { return nil }
             return pdf
         }
+        if documents.count < urls.count {
+            Panels.showMessage(title: "部分檔案未合併", message: "損毀或未輸入密碼的檔案已略過。", style: .warning)
+        }
         guard !documents.isEmpty else { return }
         let merged = PageOperations.merge(documents)
         let document = EditorDocument(pdf: merged, fileURL: nil)
