@@ -1,5 +1,5 @@
 import { indicesFromRanges } from "../engine/pageRanges";
-import type { ImageFormat, SaveOptions } from "../engine/types";
+import type { CompressLevel, ImageFormat, SaveOptions } from "../engine/types";
 import { alertDialog, confirmDialog, hasOpenModal, prompt } from "../components/Modal";
 import { api, type LoadedFile } from "../lib/api";
 import { engine } from "../lib/engine";
@@ -366,10 +366,39 @@ export async function printDocument() {
   );
 }
 
-function formatBytes(bytes: number): string {
+export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
+}
+
+/** 壓縮檔案大小並另存（可選擇是否保留原本的密碼）。 */
+export async function compressDocument(key: string, level: CompressLevel, keepPassword: boolean) {
+  const tab = getTab(key);
+  if (!tab) return;
+  const path = await api().saveDialog("壓縮檔案大小", `${stem(tab)}-壓縮.pdf`);
+  if (!path) return;
+  await guard("壓縮失敗", async () => {
+    const security = keepPassword ? (tab.security ?? {}) : {};
+    const before = (await engine.save(tab.engineId, tab.security ?? {})).length;
+    const data = await engine.compress(tab.engineId, level, security);
+    await api().writeFile(path, data);
+    const saved = before > 0 ? Math.max(0, Math.round((1 - data.length / before) * 100)) : 0;
+    await alertDialog("壓縮完成", `已儲存至「${baseName(path)}」\n壓縮前約 ${formatBytes(before)}，壓縮後 ${formatBytes(data.length)}（縮小約 ${saved}%）`);
+  });
+}
+
+/** 移除密碼與權限限制，另存沒有加密的版本（文件必須已能開啟）。 */
+export async function removeSecurityDocument() {
+  const tab = activeTab();
+  if (!tab) return;
+  const path = await api().saveDialog("移除密碼與限制", `${stem(tab)}-無密碼.pdf`);
+  if (!path) return;
+  await guard("無法移除密碼", async () => {
+    const data = await engine.removeSecurity(tab.engineId);
+    await api().writeFile(path, data);
+    await alertDialog("已移除密碼與限制", `已另存沒有密碼、沒有權限限制的版本至「${baseName(path)}」。`);
+  });
 }
 
 // MARK: - 頁面

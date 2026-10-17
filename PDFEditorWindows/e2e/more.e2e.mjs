@@ -203,6 +203,34 @@ try {
     assert.equal(doc.countPages(), 2);
   }
 
+  step("移除密碼與限制：另存沒有密碼的版本");
+  const unlocked = join(work, "Locked 無密碼.pdf");
+  await mockSave(unlocked);
+  await menu("remove-security");
+  await page.locator(".dialog .primary", { hasText: "確定" }).click({ timeout: 10000 });
+  await page.waitForTimeout(300);
+  {
+    const doc = mupdf.Document.openDocument(readFileSync(unlocked), "application/pdf");
+    assert.ok(!doc.needsPassword(), "移除密碼後不應再需要密碼");
+    assert.equal(doc.countPages(), 2);
+  }
+
+  step("壓縮檔案大小：另存且可開啟");
+  const compressed = join(work, "壓縮輸出.pdf");
+  await mockSave(compressed);
+  await menu("compress");
+  await page.locator(".dialog").waitFor();
+  await page.locator('.dialog input[type=checkbox]').uncheck().catch(() => {});
+  await page.locator('.dialog input[type=radio]').nth(2).check();
+  await page.locator(".dialog .primary", { hasText: "壓縮並另存" }).click();
+  await page.locator(".dialog .primary", { hasText: "確定" }).click({ timeout: 10000 });
+  await page.waitForTimeout(300);
+  {
+    const doc = mupdf.Document.openDocument(readFileSync(compressed), "application/pdf");
+    assert.ok(!doc.needsPassword(), "壓縮後（未保留密碼）不應需要密碼");
+    assert.equal(doc.countPages(), 2);
+  }
+
   step("合併多個 PDF");
   await mockOpen([alpha, beta]);
   await menu("merge");

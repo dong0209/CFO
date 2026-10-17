@@ -1,11 +1,51 @@
 import { useState } from "react";
 import { PAGE_NUMBER_PRESETS, indicesFromRanges, parsePageRanges, renderPageNumber } from "../../engine/pageRanges";
-import type { ImageFormat, StampPosition } from "../../engine/types";
+import type { CompressLevel, ImageFormat, StampPosition } from "../../engine/types";
 import { engine } from "../../lib/engine";
 import { lastOcrLanguage, type OcrLanguage, OCR_LANGUAGES, runOcr } from "../../lib/ocr";
-import { exportImages, mutate, splitDocument, targetPages } from "../../state/actions";
+import { compressDocument, exportImages, mutate, splitDocument, targetPages } from "../../state/actions";
 import { type DocTab, hexToRgb, updateTab } from "../../state/store";
 import { Dialog } from "../Modal";
+
+const COMPRESS_OPTIONS: Array<{ id: CompressLevel; label: string; hint: string }> = [
+  { id: "low", label: "低（畫質優先）", hint: "影像維持較高解析度，檔案略為縮小" },
+  { id: "medium", label: "中（平衡）", hint: "影像降到約 150dpi，畫質與大小平衡" },
+  { id: "high", label: "高（檔案最小）", hint: "影像降到約 100dpi，適合純螢幕檢視或電子郵件" },
+];
+
+export function CompressDialog({ tab, done }: { tab: DocTab; done: Done }) {
+  const [level, setLevel] = useState<CompressLevel>("medium");
+  const hasPassword = !!(tab.security?.userPassword || tab.security?.ownerPassword);
+  const [keep, setKeep] = useState(hasPassword);
+  return (
+    <Dialog
+      title="壓縮檔案大小"
+      onCancel={() => done()}
+      confirmText="壓縮並另存…"
+      onConfirm={() => {
+        done();
+        compressDocument(tab.key, level, keep);
+      }}
+    >
+      {COMPRESS_OPTIONS.map((opt) => (
+        <label key={opt.id} className="radio">
+          <input type="radio" name="compress-level" checked={level === opt.id} onChange={() => setLevel(opt.id)} />
+          <span>
+            <strong>{opt.label}</strong>
+            <br />
+            <span className="muted small">{opt.hint}</span>
+          </span>
+        </label>
+      ))}
+      {hasPassword && (
+        <label className="check">
+          <input type="checkbox" checked={keep} onChange={(e) => setKeep(e.target.checked)} /> 保留原本的密碼保護
+        </label>
+      )}
+      <p className="hint">壓縮會把頁面上較大的影像降低解析度並重新壓縮；文字與向量內容不受影響。掃描檔或含大量照片的檔案效果最明顯。</p>
+    </Dialog>
+  );
+}
 
 type Done = (value: void) => void;
 

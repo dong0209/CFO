@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "./lib/api";
 import { engineReady } from "./lib/engine";
 import {
-  deleteSelectedAnnotation, goToPage, handleCloseRequest, openPaths, refreshRecent, registerCommands, runCommand, selectTool,
+  deleteSelectedAnnotation, goToPage, handleCloseRequest, openPaths, refreshRecent, registerCommands, removeSecurityDocument, runCommand, selectTool,
 } from "./state/actions";
 import { activeTab, setState, updateTab, useActiveTab, useStore } from "./state/store";
 import { StatusBar, TabBar, Toolbar, TOOL_KEYS, Welcome } from "./components/Chrome";
@@ -15,6 +15,8 @@ import { openImageEditor } from "./components/dialogs/ImageEditorDialog";
 registerCommands({
   "export-images": () => openDialog("export-images"),
   password: () => openDialog("password"),
+  compress: () => openDialog("compress"),
+  "remove-security": () => removeSecurityDocument(),
   split: () => openDialog("split"),
   watermark: () => openDialog("watermark"),
   "page-numbers": () => openDialog("page-numbers"),

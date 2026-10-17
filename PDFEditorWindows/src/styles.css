@@ -212,6 +212,8 @@ select.widget { color: #000; background: rgba(255, 255, 255, 0.85); }
 .field { display: grid; grid-template-columns: 110px 1fr auto; align-items: center; gap: 10px; margin: 8px 0; }
 .field output { min-width: 44px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
 .check { display: flex; align-items: center; gap: 8px; margin: 10px 0; }
+.radio { display: flex; align-items: flex-start; gap: 8px; margin: 8px 0; cursor: pointer; }
+.radio input { margin-top: 3px; }
 .row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
 .progress-dialog { width: 360px; text-align: center; }
 .progress-dialog progress { width: 100%; }
