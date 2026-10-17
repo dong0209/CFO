@@ -101,13 +101,21 @@ export function ImageEditor({ page, host, title, onDone }: { page: EditorPage; h
   const [objects, setObjects] = useState<EditorObject[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [selection, setSelection] = useState<[number, number, number, number] | null>(null);
-  const [floating, setFloating] = useState<Floating | null>(null);
+  const [floating, setFloatingState] = useState<Floating | null>(null);
+  // 同一個事件中連續操作時（例如套用時先放下再調整），以 ref 取得最新的浮動選取
+  const floatingRef = useRef<Floating | null>(null);
+  const setFloating = (f: Floating | null) => {
+    floatingRef.current = f;
+    setFloatingState(f);
+  };
   const [cropRect, setCropRect] = useState<[number, number, number, number] | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   const [historyVersion, setHistoryVersion] = useState(0);
   const undoStack = useRef<HistoryEntry[]>([]);
   const redoStack = useRef<HistoryEntry[]>([]);
   const clipboard = useRef<HTMLCanvasElement | null>(null);
+  /** 超過復原上限而丟棄的紀錄中有像素修改（套用時仍要輸出影像） */
+  const rasterDropped = useRef(false);
 
   // 工具設定
   const [brushColor, setBrushColor] = useState("#e03131");
@@ -135,7 +143,7 @@ export function ImageEditor({ page, host, title, onDone }: { page: EditorPage; h
   const ctx = () => canvasRef.current!.getContext("2d", { willReadFrequently: true })!;
   const canUndo = undoStack.current.length > 0 || floating !== null;
   const canRedo = redoStack.current.length > 0;
-  const pixelsChanged = undoStack.current.some((e) => e.kind !== "objects") || floating !== null;
+  const pixelsChanged = rasterDropped.current || undoStack.current.some((e) => e.kind !== "objects") || floating !== null;
   void historyVersion;
 
   // MARK: 載入
@@ -193,7 +201,7 @@ export function ImageEditor({ page, host, title, onDone }: { page: EditorPage; h
 
   const pushHistory = (entry: HistoryEntry) => {
     undoStack.current.push(entry);
-    if (undoStack.current.length > 40) undoStack.current.shift();
+    if (undoStack.current.length > 40 && undoStack.current.shift()?.kind !== "objects") rasterDropped.current = true;
     redoStack.current = [];
     setHistoryVersion((v) => v + 1);
   };
@@ -283,7 +291,7 @@ export function ImageEditor({ page, host, title, onDone }: { page: EditorPage; h
     return f;
   };
 
-  const commitFloating = (f: Floating | null = floating) => {
+  const commitFloating = (f: Floating | null = floatingRef.current) => {
     if (!f) return;
     const s = k();
     ctx().drawImage(f.canvas, f.x * s, f.y * s, f.w * s, f.h * s);
@@ -294,6 +302,7 @@ export function ImageEditor({ page, host, title, onDone }: { page: EditorPage; h
   };
 
   const cancelFloating = () => {
+    const floating = floatingRef.current;
     if (!floating) return;
     ctx().putImageData(floating.before, 0, 0);
     setFloating(null);
@@ -324,8 +333,8 @@ export function ImageEditor({ page, host, title, onDone }: { page: EditorPage; h
     const w = source.width / s;
     const h = source.height / s;
     const base = selection ?? [pageSize.w / 2 - w / 2, pageSize.h / 2 - h / 2];
-    const x = Math.min(pageSize.w - w, base[0] + 12);
-    const y = Math.min(pageSize.h - h, base[1] + 12);
+    const x = Math.max(0, Math.min(pageSize.w - w, base[0] + 12));
+    const y = Math.max(0, Math.min(pageSize.h - h, base[1] + 12));
     const piece = cloneCanvas(source);
     setFloating({ canvas: piece, url: piece.toDataURL(), x, y, w, h, before: snapshot(), from: [x * s, y * s, (x + w) * s, (y + h) * s] });
     setSelection(null);
@@ -361,6 +370,7 @@ export function ImageEditor({ page, host, title, onDone }: { page: EditorPage; h
   };
 
   const commitFloatingDiscard = () => {
+    const floating = floatingRef.current;
     if (!floating) return;
     recordRaster(floating.before, floating.from);
     setFloating(null);
@@ -595,7 +605,10 @@ export function ImageEditor({ page, host, title, onDone }: { page: EditorPage; h
 
   const insertImage = async () => {
     const data = await host.pickImage().catch(() => null);
-    if (!data) return;
+    if (data) placeImage(data);
+  };
+
+  const placeImage = (data: Uint8Array) => {
     const url = URL.createObjectURL(new Blob([data as BlobPart]));
     const img = new Image();
     img.onload = () => {
@@ -958,8 +971,16 @@ export function ImageEditor({ page, host, title, onDone }: { page: EditorPage; h
     };
     const onPaste = (e: ClipboardEvent) => {
       if (editingText(e)) return;
-      pasteClipboard();
       e.preventDefault();
+      // 沒有在編輯器裡複製過區域時，貼上系統剪貼簿中的圖片（例如螢幕截圖）
+      const file = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith("image/"));
+      if (!clipboard.current && file) {
+        imageFileData(file)
+          .then((data) => data && placeImage(data))
+          .catch(() => {});
+        return;
+      }
+      pasteClipboard();
     };
     window.addEventListener("app-command", onCommand);
     document.addEventListener("copy", onCopy);
@@ -975,12 +996,17 @@ export function ImageEditor({ page, host, title, onDone }: { page: EditorPage; h
 
   // MARK: 完成
 
+  const adjustPending = brightness !== 100 || contrast !== 100 || grayscale || deskew !== 0;
+
   const finish = async () => {
+    // 尚未按「套用」的拉正與亮度對比也一併套用（畫面上已顯示調整後的樣子）
+    if (deskew) applyDeskew();
+    if (brightness !== 100 || contrast !== 100 || grayscale) applyAdjust();
     commitFloating();
     setBusy("正在套用…");
     try {
       let background: Uint8Array | null = null;
-      if (undoStack.current.some((e) => e.kind !== "objects")) {
+      if (rasterDropped.current || undoStack.current.some((e) => e.kind !== "objects")) {
         const canvas = canvasRef.current!;
         const image = ctx().getImageData(0, 0, canvas.width, canvas.height);
         const photo = looksPhotographic({ width: image.width, height: image.height, data: image.data });
@@ -992,7 +1018,8 @@ export function ImageEditor({ page, host, title, onDone }: { page: EditorPage; h
         width: pageSize.w,
         height: pageSize.h,
         background,
-        objects: objects.map((o) => {
+        // 清空內容的文字物件不寫入
+        objects: objects.filter((o) => o.type !== "text" || o.text.trim() !== "").map((o) => {
           if (o.type === "image") {
             const { id: _id, url: _url, ...rest } = o;
             return rest;
@@ -1008,7 +1035,7 @@ export function ImageEditor({ page, host, title, onDone }: { page: EditorPage; h
     }
   };
 
-  const hasChanges = undoStack.current.length > 0 || floating !== null;
+  const hasChanges = undoStack.current.length > 0 || floating !== null || adjustPending;
   const requestCancel = () => {
     if (hasChanges) setConfirmCancel(true);
     else onDone(null);
@@ -1619,6 +1646,19 @@ function normalized(a: [number, number], b: [number, number], size: { w: number;
   const clampX = (v: number) => Math.max(0, Math.min(size.w, v));
   const clampY = (v: number) => Math.max(0, Math.min(size.h, v));
   return [clampX(Math.min(a[0], b[0])), clampY(Math.min(a[1], b[1])), clampX(Math.max(a[0], b[0])), clampY(Math.max(a[1], b[1]))];
+}
+
+/** 剪貼簿中的圖片：PNG、JPEG 直接使用，其他格式轉成 PNG。 */
+async function imageFileData(file: Blob): Promise<Uint8Array | null> {
+  if (file.type === "image/png" || file.type === "image/jpeg") return new Uint8Array(await file.arrayBuffer());
+  const bitmap = await createImageBitmap(file);
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+  return blob ? new Uint8Array(await blob.arrayBuffer()) : null;
 }
 
 function cloneCanvas(source: HTMLCanvasElement): HTMLCanvasElement {

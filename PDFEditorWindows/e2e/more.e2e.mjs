@@ -245,6 +245,41 @@ try {
     assert.equal(doc.countPages(), 5);
   }
 
+  step("影像編輯：未按「套用調整」的亮度也會套用；可貼上剪貼簿中的圖片");
+  const luminance = (file) => {
+    const doc = mupdf.Document.openDocument(readFileSync(file), "application/pdf");
+    const pixmap = doc.loadPage(0).toPixmap(mupdf.Matrix.scale(0.25, 0.25), mupdf.ColorSpace.DeviceGray, false, true);
+    const pixels = pixmap.getPixels();
+    return pixels.reduce((sum, v) => sum + v, 0) / pixels.length;
+  };
+  await menu("image-edit");
+  await page.locator(".ie-root").waitFor();
+  await page.waitForSelector(".ie-loading", { state: "detached", timeout: 30000 });
+  await page.waitForTimeout(300);
+  await page.locator('.ie-panel input[type=range]').nth(1).fill("50");
+  await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 40;
+    canvas.height = 40;
+    const c = canvas.getContext("2d");
+    c.fillStyle = "#ff0000";
+    c.fillRect(0, 0, 40, 40);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+    const data = new DataTransfer();
+    data.items.add(new File([blob], "clip.png", { type: "image/png" }));
+    document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true }));
+  });
+  await page.waitForSelector(".ie-overlay image", { timeout: 5000 });
+  await page.locator(".ie-top .ie-primary").click();
+  await page.waitForSelector(".ie-root", { state: "detached", timeout: 60000 });
+  const darker = join(work, "影像編輯3.pdf");
+  await saveAs(darker);
+  {
+    const before = luminance(edited);
+    const after = luminance(darker);
+    assert.ok(after < before * 0.75, `亮度調整應已套用：${before.toFixed(1)} → ${after.toFixed(1)}`);
+  }
+
   step("關閉有未儲存變更的分頁：選擇取消");
   await menu("insert-blank");
   await page.waitForTimeout(300);
