@@ -1,7 +1,7 @@
 import * as mupdf from "mupdf";
 import { beforeEach, describe, expect, it } from "vitest";
 import { latinFontFor, PdfEngine } from "../src/engine/pdfEngine";
-import { makePdf, makePng, makeStyledPdf } from "./helpers";
+import { formPdf, makePdf, makePng, makeStyledPdf } from "./helpers";
 
 const texts = (engine: PdfEngine, id: number) =>
   Array.from({ length: engine.info(id).pageCount }, (_, i) => engine.pageText(id, i).trim());
@@ -221,6 +221,27 @@ describe("搜尋、書籤、表單與存檔", () => {
     engine.deleteBookmark(id, [0]);
     outline = engine.info(id).outline;
     expect(outline.map((o) => o.title)).toEqual(["附錄"]);
+  });
+
+  it("填寫表單（文字、核取方塊、下拉選單），存檔後保留並可平面化", () => {
+    const { id } = engine.open(formPdf());
+    const [text, check, choice] = engine.widgets(id, 0);
+    expect([text.kind, check.kind, choice.kind]).toEqual(["text", "checkbox", "combobox"]);
+    expect(choice.options).toEqual(["Red", "Green", "Blue"]);
+    engine.setWidgetValue(id, 0, text.id, "王小明 Wang");
+    engine.setWidgetValue(id, 0, check.id, null);
+    engine.setWidgetValue(id, 0, choice.id, "Green");
+    const reopened = engine.open(engine.save(id)).id;
+    const saved = engine.widgets(reopened, 0);
+    expect(saved.map((w) => w.value)).toEqual(["王小明 Wang", "Yes", "Green"]);
+    expect(saved[1].checked).toBe(true);
+    engine.flatten(reopened);
+    expect(engine.widgets(reopened, 0)).toHaveLength(0);
+    expect(engine.pageText(reopened, 0)).toContain("王小明 Wang");
+    engine.undo(id);
+    engine.undo(id);
+    engine.undo(id);
+    expect(engine.widgets(id, 0).map((w) => w.value)).toEqual(["", "Off", ""]);
   });
 
   it("加密、解鎖與移除密碼", () => {

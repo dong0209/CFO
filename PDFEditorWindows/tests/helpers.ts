@@ -137,3 +137,25 @@ export function makeScannedBlockPdf(): Uint8Array {
   doc.insertPage(0, doc.addPage([0, 0, 595, 842], 0, { XObject: { Im0: image } }, "q 595 0 0 842 0 0 cm /Im0 Do Q"));
   return doc.saveToBuffer("compress").asUint8Array().slice();
 }
+
+/** 含文字欄位、核取方塊與下拉選單的表單。 */
+export function formPdf(): Uint8Array {
+  const objs = [
+    "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R 5 0 R 6 0 R] /DA (/Helv 12 Tf 0 g) /DR << /Font << /Helv 7 0 R >> >> /NeedAppearances true >> >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Annots [4 0 R 5 0 R 6 0 R] /Resources << >> >>",
+    "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /Rect [100 700 300 720] /DA (/Helv 12 Tf 0 g) /P 3 0 R /F 4 >>",
+    "<< /Type /Annot /Subtype /Widget /FT /Btn /T (agree) /Rect [100 650 115 665] /V /Off /AS /Off /P 3 0 R /F 4 /MK << /CA (4) >> /AP << /N << /Yes 8 0 R /Off 9 0 R >> >> >>",
+    "<< /Type /Annot /Subtype /Widget /FT /Ch /Ff 131072 /T (color) /Rect [100 600 250 620] /Opt [(Red) (Green) (Blue)] /DA (/Helv 12 Tf 0 g) /P 3 0 R /F 4 >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    "<< /Length 0 /Type /XObject /Subtype /Form /BBox [0 0 15 15] >>\nstream\n\nendstream",
+    "<< /Length 0 /Type /XObject /Subtype /Form /BBox [0 0 15 15] >>\nstream\n\nendstream",
+  ];
+  let out = "%PDF-1.7\n";
+  const offsets: number[] = [];
+  objs.forEach((o, i) => { offsets.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n` + offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("");
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return new TextEncoder().encode(out);
+}
