@@ -1,0 +1,981 @@
+<title>當沖戰情室</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: 交易台 — 頂部常駐盤勢列（時鐘／風控燈號），下方分頁工作區，數字一律等寬對齊 */
+:root{
+  --bg:#eef1f4; --panel:#ffffff; --ink:#18202b; --muted:#5d6876; --line:#d5dbe2; --soft:#e4e9ee;
+  --accent:#1f5fae; --accent-ink:#ffffff;
+  --up:#d1242f; --down:#0f8a4b; --warn:#b26a00; --upbg:#fbe7e8; --downbg:#e2f4ea; --warnbg:#fdf1dc;
+  --font-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+  --font-num:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  --r:6px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#10151c; --panel:#171e27; --ink:#e3e8ee; --muted:#93a0af; --line:#2a3542; --soft:#1f2832;
+  --accent:#5b9bea; --accent-ink:#0b1420;
+  --up:#ff5c63; --down:#33c47a; --warn:#f0a63a; --upbg:#3a1b1e; --downbg:#13321f; --warnbg:#3a2a10; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#10151c; --panel:#171e27; --ink:#e3e8ee; --muted:#93a0af; --line:#2a3542; --soft:#1f2832;
+  --accent:#5b9bea; --accent-ink:#0b1420;
+  --up:#ff5c63; --down:#33c47a; --warn:#f0a63a; --upbg:#3a1b1e; --downbg:#13321f; --warnbg:#3a2a10; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:14px;line-height:1.55}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--panel)}
+.wrap{max-width:1180px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 48px}
+.num{font-family:var(--font-num);font-variant-numeric:tabular-nums}
+.up{color:var(--up)} .down{color:var(--down)} .muted{color:var(--muted)}
+h1,h2,h3{margin:0;text-wrap:balance}
+h2{font-size:15px;font-weight:700}
+h3{font-size:13px;font-weight:700;color:var(--muted);letter-spacing:.04em}
+
+/* 頂部盤勢列 */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--panel);border-bottom:1px solid var(--line)}
+.top-in{max-width:1180px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:10px;display:flex;flex-wrap:wrap;gap:10px 22px;align-items:center}
+.brand{display:flex;align-items:baseline;gap:8px}
+.brand h1{font-size:19px;font-weight:900;letter-spacing:.02em}
+.brand .tag{font-family:var(--font-num);font-size:11px;color:var(--muted);letter-spacing:.08em}
+.clock{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.clock .t{font-family:var(--font-num);font-size:20px;font-weight:600}
+.phase{font-size:12px;padding:2px 9px;border-radius:99px;border:1px solid var(--line);background:var(--soft)}
+.phase.live{border-color:var(--up);color:var(--up);background:var(--upbg)}
+.phase.close{border-color:var(--warn);color:var(--warn);background:var(--warnbg)}
+.count{font-size:12px;color:var(--muted)}
+.count b{font-family:var(--font-num);color:var(--ink);font-weight:600}
+.risklamp{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;padding:5px 12px;border-radius:var(--r);border:1px solid var(--line)}
+.risklamp i{width:9px;height:9px;border-radius:50%;background:var(--down)}
+.risklamp.warn{border-color:var(--warn);background:var(--warnbg);color:var(--warn)} .risklamp.warn i{background:var(--warn)}
+.risklamp.stop{border-color:var(--up);background:var(--upbg);color:var(--up)} .risklamp.stop i{background:var(--up)}
+
+nav.tabs{display:flex;gap:2px;overflow-x:auto;margin-top:14px;border-bottom:1px solid var(--line)}
+nav.tabs button{appearance:none;border:0;background:none;color:var(--muted);font:inherit;font-weight:700;padding:10px 14px;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
+nav.tabs button[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+nav.tabs button:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+section.page{padding-top:18px;display:grid;gap:16px}
+.grid{display:grid;gap:16px}
+.g2{grid-template-columns:minmax(0,340px) minmax(0,1fr)}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media (max-width:860px){.g2,.g3{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:16px;min-width:0}
+.panel>.hd{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+
+/* 表單 */
+.form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 12px}
+.form .full{grid-column:1/-1}
+label.f{display:grid;gap:3px;font-size:12px;color:var(--muted);min-width:0}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:7px 9px;width:100%;min-width:0}
+input[type=number],input.numin{font-family:var(--font-num)}
+textarea{font-family:var(--font-num);font-size:12px;resize:vertical}
+.seg{display:flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+.seg button{flex:1;appearance:none;border:0;background:var(--bg);color:var(--muted);font:inherit;font-weight:700;padding:7px 4px;cursor:pointer}
+.seg button[aria-pressed="true"].long{background:var(--up);color:#fff}
+.seg button[aria-pressed="true"].short{background:var(--down);color:#fff}
+.seg button[aria-pressed="true"].plain{background:var(--accent);color:var(--accent-ink)}
+.btn{appearance:none;font:inherit;font-weight:700;border-radius:5px;padding:7px 14px;cursor:pointer;border:1px solid var(--accent);background:var(--accent);color:var(--accent-ink)}
+.btn.ghost{background:transparent;color:var(--accent)}
+.btn.sm{padding:4px 10px;font-size:12px}
+.btn.danger{border-color:var(--up);background:transparent;color:var(--up)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+/* 數據格 */
+.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:1px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.kv>div{background:var(--panel);outline:1px solid var(--line);padding:10px 12px;display:grid;gap:2px;min-width:0}
+.kv .k{font-size:11px;color:var(--muted);letter-spacing:.04em}
+.kv .v{font-family:var(--font-num);font-variant-numeric:tabular-nums;font-size:17px;font-weight:600;overflow-wrap:anywhere}
+.kv .s{font-size:11px;color:var(--muted)}
+.big .v{font-size:22px}
+.pill{display:inline-block;font-size:11px;font-weight:700;padding:1px 8px;border-radius:99px;border:1px solid currentColor}
+.note{font-size:12px;color:var(--muted)}
+.alert{border-radius:var(--r);padding:10px 14px;font-weight:700;border:1px solid}
+.alert.stop{background:var(--upbg);border-color:var(--up);color:var(--up)}
+.alert.warn{background:var(--warnbg);border-color:var(--warn);color:var(--warn)}
+.alert.ok{background:var(--downbg);border-color:var(--down);color:var(--down)}
+
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{font-size:11px;color:var(--muted);font-weight:700;letter-spacing:.04em;position:sticky;top:0;background:var(--panel)}
+td.l,th.l{text-align:left}
+td{font-family:var(--font-num);font-variant-numeric:tabular-nums}
+td.txt{font-family:var(--font-body)}
+tr.mark-entry td{background:var(--soft);font-weight:600}
+tr.mark-stop td{background:var(--downbg)}
+tr.mark-target td{background:var(--upbg)}
+tr.mark-be td{box-shadow:inset 0 -2px 0 var(--warn)}
+.short-mode tr.mark-stop td{background:var(--upbg)}
+.short-mode tr.mark-target td{background:var(--downbg)}
+
+canvas{display:block;width:100%;max-width:100%}
+.chartbox{position:relative;border:1px solid var(--line);border-radius:var(--r);background:var(--panel);overflow:hidden}
+.legend{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:8px}
+.legend span::before{content:"";display:inline-block;width:14px;height:3px;margin-right:5px;vertical-align:middle;background:var(--c)}
+.siglist{display:grid;gap:6px;max-height:340px;overflow:auto}
+.sig{display:grid;grid-template-columns:50px 1fr;gap:8px;font-size:13px;padding:6px 8px;border-radius:5px;background:var(--soft)}
+.sig .tm{font-family:var(--font-num);color:var(--muted)}
+.bias{font-size:26px;font-weight:900}
+
+.check{display:grid;gap:6px}
+.check label{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;border:1px solid var(--line);border-radius:5px;cursor:pointer;background:var(--bg)}
+.check input{width:auto;margin-top:4px}
+.check label.done{color:var(--muted);text-decoration:line-through}
+.progress{height:6px;border-radius:3px;background:var(--soft);overflow:hidden}
+.progress>i{display:block;height:100%;background:var(--accent);width:0}
+.coach{white-space:pre-wrap;font-size:13.5px;line-height:1.75;background:var(--bg);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;min-height:60px}
+.store-badge{font-size:11px;color:var(--muted)}
+/* 即時盯盤 */
+.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--muted);margin-right:6px;vertical-align:middle}
+.live-dot.on{background:var(--down);box-shadow:0 0 0 3px var(--downbg)}
+.live-dot.err{background:var(--up)}
+.topq{font-size:12px;color:var(--muted)} .topq b{font-family:var(--font-num);font-size:15px}
+#wl tbody tr{cursor:pointer} #wl tbody tr.sel td{background:var(--soft)}
+.quote-big{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.quote-big .px{font-family:var(--font-num);font-size:38px;font-weight:600;line-height:1.1}
+.book td{padding:3px 8px}
+.book .bar{display:inline-block;height:8px;border-radius:2px;vertical-align:middle;opacity:.55}
+.tvbox{height:520px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--panel)}
+@media (max-width:600px){.tvbox{height:380px}}
+.toast{position:fixed;right:max(16px,env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:20;display:grid;gap:8px;max-width:min(360px,calc(100vw - 32px))}
+.toast div{background:var(--panel);border:1px solid var(--warn);border-left:4px solid var(--warn);border-radius:var(--r);padding:10px 14px;font-weight:700;box-shadow:0 6px 24px rgba(0,0,0,.18)}
+.steps{margin:0;padding-left:20px;display:grid;gap:6px}
+.steps code{font-family:var(--font-num);background:var(--soft);padding:1px 6px;border-radius:4px;font-size:12.5px;overflow-wrap:anywhere}
+footer{margin-top:28px;font-size:12px;color:var(--muted);line-height:1.7}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<header class="top">
+  <div class="top-in">
+    <div class="brand"><h1>當沖戰情室</h1><span class="tag">TWSE · 現股當沖</span></div>
+    <div class="clock">
+      <span class="t" id="clk">--:--:--</span>
+      <span class="phase" id="phase">—</span>
+      <span class="count" id="cdown"></span>
+    </div>
+    <div class="topq" id="topq"><span class="live-dot" id="liveDot"></span><span id="liveTxt">離線模式</span></div>
+    <div class="risklamp" id="lamp"><i></i><span id="lampTxt">風控正常</span></div>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="tabs" role="tablist" id="tabs">
+    <button role="tab" data-tab="live" aria-selected="false">即時盯盤</button>
+    <button role="tab" data-tab="plan" aria-selected="true">進出場計算</button>
+    <button role="tab" data-tab="chart" aria-selected="false">盤中技術位</button>
+    <button role="tab" data-tab="journal" aria-selected="false">交易日誌</button>
+    <button role="tab" data-tab="risk" aria-selected="false">風控與紀律</button>
+    <button role="tab" data-tab="settings" aria-selected="false">費率設定</button>
+  </nav>
+
+  <!-- ===== 即時盯盤 ===== -->
+  <section class="page" data-page="live" hidden>
+    <div class="panel" id="lv_off">
+      <div class="hd"><h2>即時報價需要本機版</h2><span class="pill muted">目前為離線模式</span></div>
+      <p style="margin:0 0 10px">網頁版受安全限制，無法直接連到證交所或 TradingView 取得報價。在自己電腦上執行本機報價服務後，同一個頁面會自動切換成即時模式。</p>
+      <ol class="steps">
+        <li>把 <code>daytrade.html</code> 和 <code>daytrade_server.py</code> 放在同一個資料夾</li>
+        <li>安裝 Python 3（不需任何套件），在該資料夾執行 <code>python3 daytrade_server.py</code>（Windows 用 <code>py daytrade_server.py</code>）</li>
+        <li>用瀏覽器打開 <code>http://127.0.0.1:8787</code></li>
+      </ol>
+      <p class="note" style="margin:10px 0 0">本機版提供：證交所即時成交價與五檔、觀察清單、自動更新分 K、到價聲音與桌面通知、TradingView 即時圖表。日誌在本機版會存在該瀏覽器。</p>
+      <div class="row" style="margin-top:10px"><a class="btn ghost sm" id="lv_tvlink" href="https://www.tradingview.com/chart/?symbol=TWSE%3A2330" target="_blank" rel="noopener">在 TradingView 開啟 2330</a></div>
+    </div>
+    <div class="grid" id="lv_on" hidden>
+      <div class="panel">
+        <div class="hd"><h2>觀察清單</h2>
+          <div class="row">
+            <label class="f" style="min-width:220px">代號（逗號分隔，最多 30 檔）<input id="lv_codes" value="2330,2317,2454,3231,2603"></label>
+            <label class="f">更新間隔<select id="lv_int"><option value="3">3 秒</option><option value="5" selected>5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option></select></label>
+          </div>
+        </div>
+        <div class="tbl" id="wl"></div>
+        <p class="note" id="lv_status" style="margin:8px 0 0"></p>
+      </div>
+      <div class="grid g2">
+        <div class="panel">
+          <div class="hd"><h2 id="fq_title">—</h2><span class="note" id="fq_time"></span></div>
+          <div class="quote-big"><span class="px" id="fq_px">—</span><span class="num" id="fq_chg"></span></div>
+          <div class="kv" id="fq_kv" style="margin-top:12px"></div>
+          <div class="row" style="margin-top:12px">
+            <button class="btn sm" id="fq_toPlan">帶入進出場計算</button>
+            <button class="btn ghost sm" id="fq_toChart">載入分 K 到技術位</button>
+            <a class="btn ghost sm" id="fq_tv" target="_blank" rel="noopener" href="#">在 TradingView 開啟</a>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="hd"><h2>最佳五檔</h2><span class="note">張</span></div>
+          <div class="tbl" id="fq_book"></div>
+        </div>
+      </div>
+      <div class="grid g2">
+        <div class="panel">
+          <div class="hd"><h2>到價提醒</h2><button class="btn ghost sm" id="al_sound">啟用聲音與通知</button></div>
+          <form class="form" id="al_form">
+            <label class="f">代號<input id="al_code" required placeholder="2330"></label>
+            <label class="f">條件<select id="al_op"><option value="ge">漲到 ≥</option><option value="le">跌到 ≤</option></select></label>
+            <label class="f">價格<input id="al_px" type="number" step="0.01" required></label>
+            <label class="f">備註<input id="al_note" placeholder="例如：突破昨高"></label>
+            <div class="full row"><button class="btn sm" type="submit">新增提醒</button>
+              <label class="row note" style="gap:6px"><input type="checkbox" id="al_plan" style="width:auto" checked> 自動監控計算頁的停損與目標價</label></div>
+          </form>
+          <div class="tbl" id="al_list" style="margin-top:10px"></div>
+        </div>
+        <div class="panel">
+          <div class="hd"><h2>TradingView 圖表</h2><span class="note" id="tv_note">TradingView 官方嵌入圖表</span></div>
+          <div class="tvbox" id="tvbox"></div>
+          <p class="note" style="margin:8px 0 0">部分台股在嵌入圖表上可能有延遲或無法顯示，遇到時請改用上方按鈕在 TradingView 網站開啟。計算與提醒一律使用證交所報價。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 進出場計算 ===== -->
+  <section class="page" data-page="plan">
+    <div class="grid g2">
+      <div class="panel">
+        <div class="hd"><h2>交易計畫</h2><span class="note">輸入後即時計算</span></div>
+        <div class="form">
+          <div class="full seg" id="dirSeg">
+            <button class="long" data-dir="long" aria-pressed="true">做多（先買後賣）</button>
+            <button class="short" data-dir="short" aria-pressed="false">做空（先賣後買）</button>
+          </div>
+          <label class="f">股票代號／名稱<input id="p_sym" value="2330 台積電"></label>
+          <label class="f">商品類型<select id="p_kind"><option value="stock">股票</option><option value="etf">ETF</option></select></label>
+          <label class="f">昨收（參考價）<input id="p_ref" type="number" step="0.01" value="1045"></label>
+          <label class="f">進場價<input id="p_entry" type="number" step="0.01" value="1050"></label>
+          <label class="f">停損價<input id="p_stop" type="number" step="0.01" value="1040"></label>
+          <label class="f">目標價<input id="p_target" type="number" step="0.01" value="1075"></label>
+          <label class="f">帳戶資金（元）<input id="p_cap" type="number" step="10000" value="2000000"></label>
+          <label class="f">單筆風險 %<input id="p_risk" type="number" step="0.1" value="0.5"></label>
+          <label class="f">當沖額度上限（元）<input id="p_quota" type="number" step="100000" value="5000000"></label>
+          <label class="f">下單單位<select id="p_unit"><option value="lot">整張（1000 股）</option><option value="odd">零股（1 股）</option></select></label>
+          <label class="f full">自訂股數（留空＝依風險自動計算）<input id="p_manual" type="number" step="1" placeholder="例如 2000"></label>
+        </div>
+        <p class="note" id="p_fix" style="margin:10px 0 0"></p>
+      </div>
+
+      <div class="grid" style="gap:16px;min-width:0">
+        <div id="p_alert"></div>
+        <div class="kv big" id="p_main"></div>
+        <div class="kv" id="p_detail"></div>
+        <div class="panel">
+          <div class="hd"><h2>價位階梯</h2><span class="note">每一檔的淨損益（已扣手續費與證交稅）</span></div>
+          <div class="tbl" id="ladder"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 盤中技術位 ===== -->
+  <section class="page" data-page="chart" hidden>
+    <div class="grid g2">
+      <div class="panel">
+        <div class="hd"><h2>資料輸入</h2><button class="btn ghost sm" id="c_demo">載入示範資料</button></div>
+        <div class="form">
+          <label class="f">昨日最高<input id="c_ph" type="number" step="0.01"></label>
+          <label class="f">昨日最低<input id="c_pl" type="number" step="0.01"></label>
+          <label class="f">昨日收盤<input id="c_pc" type="number" step="0.01"></label>
+          <label class="f">開盤區間（分鐘）<select id="c_orb"><option>5</option><option selected>15</option><option>30</option></select></label>
+          <label class="f full">分K資料（每行：時間,開,高,低,收,量）
+            <textarea id="c_csv" rows="9" placeholder="09:01,1050,1052,1048,1051,1520"></textarea></label>
+          <div class="full row"><button class="btn" id="c_run">更新分析</button><span class="note" id="c_info"></span></div>
+          <div class="full row" id="c_liveRow" hidden><label class="row note" style="gap:6px"><input type="checkbox" id="c_auto" style="width:auto"> 自動更新 <b id="c_autoSym" class="num"></b> 的分 K（每 30 秒）</label></div>
+        </div>
+        <p class="note">可直接貼上看盤軟體匯出的 1 分 K（逗號、Tab 或空白分隔皆可，首行標題會自動略過）。</p>
+      </div>
+      <div class="grid" style="min-width:0">
+        <div class="panel">
+          <div class="hd"><h2 id="c_title">分時走勢</h2><span class="note" id="c_last"></span></div>
+          <div class="chartbox"><canvas id="cv" height="380"></canvas></div>
+          <div class="legend">
+            <span style="--c:var(--accent)">VWAP</span>
+            <span style="--c:#8a6fd1">VWAP ±1σ / ±2σ</span>
+            <span style="--c:#e08a1e">EMA9</span>
+            <span style="--c:#3aa6b9">EMA21</span>
+            <span style="--c:var(--muted)">開盤區間</span>
+          </div>
+        </div>
+        <div class="grid g3">
+          <div class="panel"><h3>多空判讀</h3><div class="bias" id="c_bias">—</div><div class="note" id="c_biasWhy"></div></div>
+          <div class="panel"><h3>關鍵價位</h3><div class="tbl" id="c_levels"></div></div>
+          <div class="panel"><h3>訊號紀錄</h3><div class="siglist" id="c_sigs"></div></div>
+        </div>
+        <div class="kv" id="c_stats"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 交易日誌 ===== -->
+  <section class="page" data-page="journal" hidden>
+    <div class="kv big" id="j_kpi"></div>
+    <div class="grid g2">
+      <div class="panel">
+        <div class="hd"><h2>新增一筆</h2><span class="store-badge" id="j_store">連線中…</span></div>
+        <form class="form" id="j_form">
+          <div class="full seg" id="jdirSeg">
+            <button type="button" class="long" data-dir="long" aria-pressed="true">做多</button>
+            <button type="button" class="short" data-dir="short" aria-pressed="false">做空</button>
+          </div>
+          <label class="f">日期<input id="j_date" type="date" required></label>
+          <label class="f">代號<input id="j_sym" required placeholder="2330"></label>
+          <label class="f">進場價<input id="j_in" type="number" step="0.01" required></label>
+          <label class="f">出場價<input id="j_out" type="number" step="0.01" required></label>
+          <label class="f">股數<input id="j_qty" type="number" step="1" value="1000" required></label>
+          <label class="f">原始停損價<input id="j_stop" type="number" step="0.01" placeholder="算 R 倍數用"></label>
+          <label class="f">策略標籤<select id="j_setup">
+            <option>開盤區間突破</option><option>VWAP 回測</option><option>VWAP 跌破</option><option>CDP 逆勢</option><option>強勢股拉回</option><option>跌深反彈</option><option>其他</option>
+          </select></label>
+          <label class="f">當下情緒<select id="j_mood">
+            <option>冷靜照計畫</option><option>FOMO 追價</option><option>報復性交易</option><option>猶豫晚進</option><option>過度自信</option>
+          </select></label>
+          <label class="f">商品類型<select id="j_kind"><option value="stock">股票</option><option value="etf">ETF</option></select></label>
+          <label class="f">是否守紀律<select id="j_rule"><option value="1">有照計畫</option><option value="0">違反計畫</option></select></label>
+          <label class="f full">檢討筆記<input id="j_note" placeholder="例如：量縮假突破，應等 5 分 K 收上"></label>
+          <div class="full row"><button class="btn" type="submit" id="j_add">記錄交易</button><span class="note" id="j_preview"></span></div>
+        </form>
+      </div>
+      <div class="grid" style="min-width:0">
+        <div class="panel">
+          <div class="hd"><h2>權益曲線</h2><span class="note">逐筆累計淨損益</span></div>
+          <div class="chartbox"><canvas id="eq" height="200"></canvas></div>
+        </div>
+        <div class="panel">
+          <div class="hd"><h2>策略與情緒拆解</h2></div>
+          <div class="grid g3" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+            <div class="tbl" id="j_bySetup"></div>
+            <div class="tbl" id="j_byMood"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="hd"><h2>AI 交易教練</h2><button class="btn" id="j_coach">檢討我的交易</button></div>
+      <div class="coach" id="j_coachOut">根據你的日誌統計，指出最該改的習慣、表現最好的策略，以及下週的具體規則。至少累積 5 筆交易後效果較好。</div>
+    </div>
+    <div class="panel">
+      <div class="hd"><h2>交易明細</h2><div class="row"><button class="btn ghost sm" id="j_copy">複製為 CSV</button></div></div>
+      <div class="tbl" id="j_table"></div>
+    </div>
+  </section>
+
+  <!-- ===== 風控與紀律 ===== -->
+  <section class="page" data-page="risk" hidden>
+    <div id="r_alert"></div>
+    <div class="kv big" id="r_kpi"></div>
+    <div class="grid g2">
+      <div class="panel">
+        <div class="hd"><h2>每日風控規則</h2></div>
+        <div class="form">
+          <label class="f">單日最大虧損（元）<input id="r_maxloss" type="number" step="1000" value="20000"></label>
+          <label class="f">單日獲利保護（元）<input id="r_lock" type="number" step="1000" value="40000"></label>
+          <label class="f">最多交易筆數<input id="r_maxtrades" type="number" step="1" value="6"></label>
+          <label class="f">連續虧損停手（筆）<input id="r_maxstreak" type="number" step="1" value="3"></label>
+          <label class="f">最晚平倉時間<input id="r_flat" type="time" value="13:20"></label>
+          <label class="f">今日不進場時間<input id="r_noentry" type="time" value="13:00"></label>
+        </div>
+        <p class="note">獲利保護：當日已實現達此金額後，回吐超過一半就提示停止交易。觸發任何一條，頂部燈號轉紅。</p>
+      </div>
+      <div class="panel">
+        <div class="hd"><h2>今日盤前檢查</h2><span class="note" id="ck_prog"></span></div>
+        <div class="progress"><i id="ck_bar"></i></div>
+        <div class="check" id="ck" style="margin-top:12px"></div>
+        <div class="row" style="margin-top:10px"><button class="btn ghost sm" id="ck_reset">重設今日清單</button></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="hd"><h2>台股當沖規則速查</h2></div>
+      <div class="tbl"><table>
+        <thead><tr><th class="l">項目</th><th class="l">內容</th></tr></thead>
+        <tbody>
+          <tr><td class="l txt">交易時段</td><td class="l txt">08:30 起接受委託、09:00 開盤，13:25–13:30 收盤集合競價（不連續撮合），當沖部位務必在 13:25 前處理</td></tr>
+          <tr><td class="l txt">現股當沖證交稅</td><td class="l txt">0.15%（減半優惠，實施至 2027/12/31）；一般賣出 0.3%；ETF 0.1%</td></tr>
+          <tr><td class="l txt">手續費</td><td class="l txt">成交金額 0.1425% × 券商折扣，買賣各收一次，未足最低手續費以最低計</td></tr>
+          <tr><td class="l txt">先賣後買</td><td class="l txt">需另簽現股當沖風險預告書並符合資格；若當日漲停無法回補，將以借券或違約處理，風險高</td></tr>
+          <tr><td class="l txt">升降單位（股票）</td><td class="l txt">未滿 10 元 0.01／10–50 元 0.05／50–100 元 0.1／100–500 元 0.5／500–1000 元 1／1000 元以上 5</td></tr>
+          <tr><td class="l txt">升降單位（ETF）</td><td class="l txt">未滿 50 元 0.01／50 元以上 0.05</td></tr>
+          <tr><td class="l txt">漲跌幅</td><td class="l txt">以參考價 ±10% 為限，依升降單位取整</td></tr>
+          <tr><td class="l txt">交割</td><td class="l txt">當沖僅交割價差與費用（T+2），沖銷失敗則需全額交割，請確保帳戶有足夠款項</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note">費率與規則以券商與證交所公告為準，可在「費率設定」調整。</p>
+    </div>
+  </section>
+
+  <!-- ===== 費率設定 ===== -->
+  <section class="page" data-page="settings" hidden>
+    <div class="panel" style="max-width:640px">
+      <div class="hd"><h2>費率設定</h2><span class="note">儲存在此瀏覽器</span></div>
+      <div class="form">
+        <label class="f">手續費率 %<input id="s_fee" type="number" step="0.0001" value="0.1425"></label>
+        <label class="f">券商折扣（折）<input id="s_disc" type="number" step="0.1" value="2.8"></label>
+        <label class="f">最低手續費（元）<input id="s_min" type="number" step="1" value="20"></label>
+        <label class="f">股票當沖證交稅 %<input id="s_tax" type="number" step="0.01" value="0.15"></label>
+        <label class="f">ETF 證交稅 %<input id="s_etax" type="number" step="0.01" value="0.1"></label>
+        <label class="f">預估滑價（檔／每邊）<input id="s_slip" type="number" step="1" value="1"></label>
+      </div>
+      <p class="note">折扣輸入 2.8 代表 2.8 折（0.1425% × 0.28）。電子下單常見最低手續費 1 元或 20 元，依你的券商填寫。滑價只用於部位計算的風險估計。</p>
+    </div>
+  </section>
+
+  <div class="toast" id="toast" aria-live="assertive"></div>
+  <footer>本工具僅供計算與紀錄輔助，不構成投資建議。技術訊號為規則化判讀，請搭配自身交易計畫使用。當沖風險高，請量力而為。</footer>
+</div>
+
+<script>
+(()=>{
+"use strict";
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const LS={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch{return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}}};
+const fmt=(n,d=0)=>isFinite(n)?n.toLocaleString("zh-TW",{minimumFractionDigits:d,maximumFractionDigits:d}):"—";
+const sgn=(n,d=0)=>isFinite(n)?(n>0?"+":"")+fmt(n,d):"—";
+const cls=n=>n>0?"up":n<0?"down":"";
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const use=n=>window.claude&&window.claude.use?window.claude.use(n).catch(()=>null):Promise.resolve(null);
+const cssVar=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+/* ---------- 台股價格規則（以「分」為整數單位運算，避免浮點誤差） ---------- */
+const C=p=>Math.round(p*100);
+const P=c=>c/100;
+function tickC(c,kind){ // c: 價格（分）
+  if(kind==="etf") return c<5000?1:5;
+  if(c<1000) return 1; if(c<5000) return 5; if(c<10000) return 10;
+  if(c<50000) return 50; if(c<100000) return 100; return 500;
+}
+const floorTick=(c,k)=>{const t=tickC(c,k);return Math.floor(c/t)*t};
+const ceilTick=(c,k)=>{const f=floorTick(c,k);return f===c?c:f+tickC(f,k)};
+const nextUp=(c,k)=>c+tickC(c,k);
+const nextDn=(c,k)=>c-tickC(c-1,k);
+function limits(refC,k){return {up:floorTick(Math.round(refC*1.1),k),dn:ceilTick(Math.round(refC*0.9),k)}}
+const dec=c=>c%100===0?0:c%10===0?1:2;
+const fp=c=>fmt(P(c),Math.max(dec(c),c<1000?2:dec(c)));
+
+/* ---------- 費率 ---------- */
+const SKEYS=["s_fee","s_disc","s_min","s_tax","s_etax","s_slip"];
+function loadSettings(){const s=LS.get("dt.settings",{});SKEYS.forEach(k=>{if(s[k]!=null)$("#"+k).value=s[k]})}
+function cfg(){return{fee:+$("#s_fee").value/100,disc:+$("#s_disc").value/10,min:+$("#s_min").value,tax:+$("#s_tax").value/100,etax:+$("#s_etax").value/100,slip:+$("#s_slip").value}}
+function fee(amount,c){return Math.max(Math.floor(amount*c.fee*c.disc),amount>0?c.min:0)}
+function taxRate(kind,c){return kind==="etf"?c.etax:c.tax}
+/** 一筆當沖的淨損益。dir: long=先買後賣；short=先賣後買 */
+function roundTrip(dir,entryC,exitC,qty,kind,c=cfg()){
+  const buyC=dir==="long"?entryC:exitC, sellC=dir==="long"?exitC:entryC;
+  const buyAmt=Math.round(buyC*qty/100), sellAmt=Math.round(sellC*qty/100);
+  const fb=fee(buyAmt,c), fs=fee(sellAmt,c), tx=Math.floor(sellAmt*taxRate(kind,c));
+  return {buyAmt,sellAmt,fb,fs,tx,cost:fb+fs+tx,gross:sellAmt-buyAmt,net:sellAmt-buyAmt-fb-fs-tx};
+}
+function breakeven(dir,entryC,qty,kind){
+  let c=entryC;
+  for(let i=0;i<400;i++){ if(roundTrip(dir,entryC,c,qty,kind).net>=0) return {c,ticks:i}; c=dir==="long"?nextUp(c,kind):nextDn(c,kind); if(c<=0)break }
+  return {c:NaN,ticks:NaN};
+}
+
+/* ---------- 台北時間 ---------- */
+function twNow(){
+  const parts=new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Taipei",hour12:false,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",weekday:"short"}).formatToParts(new Date());
+  const o={};parts.forEach(p=>o[p.type]=p.value);
+  const h=+o.hour%24;
+  return{date:`${o.year}-${o.month}-${o.day}`,h,m:+o.minute,s:+o.second,wd:o.weekday,sec:h*3600+ +o.minute*60+ +o.second,hms:`${String(h).padStart(2,"0")}:${o.minute}:${o.second}`};
+}
+const toSec=t=>{const[a,b]=(t||"0:0").split(":").map(Number);return a*3600+b*60};
+const dur=s=>{s=Math.max(0,s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return(h?h+" 時 ":"")+(m||h?m+" 分 ":"")+x+" 秒"};
+
+function tickClock(){
+  const n=twNow(); $("#clk").textContent=n.hms;
+  const wk=!["Sat","Sun"].includes(n.wd);
+  const ph=$("#phase"),cd=$("#cdown"),flat=toSec($("#r_flat").value),noe=toSec($("#r_noentry").value);
+  let t="休市",k="",c="";
+  if(!wk){t="週末休市"}
+  else if(n.sec<8.5*3600){t="盤前";c=`距 08:30 委託 <b>${dur(8.5*3600-n.sec)}</b>`}
+  else if(n.sec<9*3600){t="開盤前試撮";k="close";c=`距開盤 <b>${dur(9*3600-n.sec)}</b>`}
+  else if(n.sec<13.4167*3600){
+    t="盤中連續交易";k="live";
+    if(n.sec<flat) c=(n.sec<noe?`距停止新倉 <b>${dur(noe-n.sec)}</b>　`:"<b class=\"up\">已過新倉時間</b>　")+`距平倉期限 <b>${dur(flat-n.sec)}</b>`;
+    else c=`<b class="up">已過平倉期限，請立即沖銷部位</b>`;
+  }
+  else if(n.sec<13.5*3600){t="收盤集合競價";k="close";c=`<b class="up">尚未沖銷者請注意，${dur(13.5*3600-n.sec)}後收盤</b>`}
+  else if(n.sec<14.5*3600){t="盤後定價";c="今日當沖結束，記得寫日誌"}
+  else {t="收盤";c="今日當沖結束，記得寫日誌"}
+  ph.textContent=t;ph.className="phase "+k;cd.innerHTML=c;
+}
+
+/* ---------- 分頁 ---------- */
+function showTab(id){
+  $$("#tabs button").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===id));
+  $$("section.page").forEach(s=>s.hidden=s.dataset.page!==id);
+  LS.set("dt.tab",id);
+  if(id==="chart")drawChart(); if(id==="journal")drawEquity(); if(id==="live")loadTV(false);
+}
+$("#tabs").addEventListener("click",e=>{const b=e.target.closest("button");if(b)showTab(b.dataset.tab)});
+
+function segInit(sel,onChange){
+  const seg=$(sel);
+  seg.addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;seg.querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",x===b));onChange&&onChange(b.dataset.dir)});
+  return()=>seg.querySelector('[aria-pressed="true"]').dataset.dir;
+}
+
+/* ================= 進出場計算 ================= */
+const PKEYS=["p_sym","p_kind","p_ref","p_entry","p_stop","p_target","p_cap","p_risk","p_quota","p_unit","p_manual"];
+const getDir=segInit("#dirSeg",()=>{LS.set("dt.dir",getDir());calcPlan()});
+function calcPlan(){
+  const v={};PKEYS.forEach(k=>v[k]=$("#"+k).value);LS.set("dt.plan",v);
+  const dir=getDir(),kind=v.p_kind,c=cfg();
+  const refC=C(+v.p_ref),rawE=C(+v.p_entry),rawS=C(+v.p_stop),rawT=C(+v.p_target);
+  const out=$("#p_main"),det=$("#p_detail"),al=$("#p_alert");
+  document.querySelector('[data-page="plan"]').classList.toggle("short-mode",dir==="short");
+  if(!(refC>0&&rawE>0&&rawS>0&&rawT>0)){al.innerHTML='<div class="alert warn">請填入參考價、進場、停損、目標價</div>';out.innerHTML=det.innerHTML=$("#ladder").innerHTML="";return}
+  // 對齊升降單位：停損往不利方向、目標往保守方向取整
+  const E=floorTick(rawE,kind);
+  const S=dir==="long"?floorTick(rawS,kind):ceilTick(rawS,kind);
+  const T=dir==="long"?floorTick(rawT,kind):ceilTick(rawT,kind);
+  const fixes=[];
+  if(E!==rawE)fixes.push(`進場價調整為 ${fp(E)}`);if(S!==rawS)fixes.push(`停損價調整為 ${fp(S)}`);if(T!==rawT)fixes.push(`目標價調整為 ${fp(T)}`);
+  $("#p_fix").textContent=fixes.length?"依升降單位："+fixes.join("、"):`升降單位：每檔 ${fp(tickC(E,kind))} 元`;
+  const L=limits(refC,kind),errs=[],warns=[];
+  if(dir==="long"&&!(S<E&&T>E))errs.push("做多時應為：停損 < 進場 < 目標");
+  if(dir==="short"&&!(S>E&&T<E))errs.push("做空時應為：目標 < 進場 < 停損");
+  if(E>L.up||E<L.dn)errs.push(`進場價超出漲跌停範圍（${fp(L.dn)}–${fp(L.up)}）`);
+  if(dir==="short"&&E>=L.up)errs.push("漲停價無法先賣後買");
+  if(dir==="long"&&T>L.up)warns.push("目標價高於漲停價，實際最多到 "+fp(L.up));
+  if(dir==="short"&&T<L.dn)warns.push("目標價低於跌停價，實際最多到 "+fp(L.dn));
+  if(dir==="short"&&L.up-E<=tickC(E,kind)*5)warns.push("距漲停不到 5 檔，先賣後買有軋空無法回補風險");
+
+  const riskAmt=+v.p_cap*(+v.p_risk/100);
+  const tk=tickC(E,kind),slip=c.slip*tk*2;
+  const perShare=(Math.abs(E-S)+slip)/100+(E/100)*(c.fee*c.disc*2+taxRate(kind,c));
+  const lot=v.p_unit==="lot"?1000:1;
+  let qty=v.p_manual?Math.floor(+v.p_manual):Math.floor(riskAmt/perShare/lot)*lot;
+  const quotaQty=Math.floor(+v.p_quota/(E/100)/lot)*lot;
+  let capped=false;if(!v.p_manual&&qty>quotaQty){qty=quotaQty;capped=true}
+  if(qty<=0){al.innerHTML=errs.length?`<div class="alert stop">${errs.join("；")}</div>`:`<div class="alert warn">風險預算 ${fmt(riskAmt)} 元不足以買進 1 ${lot===1000?"張":"股"}，請放寬停損距離、提高風險 % 或改用零股。</div>`;out.innerHTML=det.innerHTML=$("#ladder").innerHTML="";return}
+
+  const win=roundTrip(dir,E,T,qty,kind),loss=roundTrip(dir,E,S,qty,kind),be=breakeven(dir,E,qty,kind);
+  const rr=win.net/Math.abs(loss.net),needWR=Math.abs(loss.net)/(win.net+Math.abs(loss.net))*100;
+  const ticksT=Math.abs(stepsBetween(E,T,kind)),ticksS=Math.abs(stepsBetween(E,S,kind));
+  const notional=Math.round(E*qty/100);
+  if(rr<1.5&&!errs.length)warns.push(`扣費後報酬風險比僅 ${fmt(rr,2)}，建議至少 1.5 以上`);
+  if(capped)warns.push("股數已受當沖額度上限限制");
+  al.innerHTML=(errs.length?`<div class="alert stop">${errs.join("；")}</div>`:"")+(warns.length?`<div class="alert warn" style="margin-top:${errs.length?8:0}px">${warns.join("；")}</div>`:"")+(!errs.length&&!warns.length?`<div class="alert ok">計畫合理：扣費後報酬風險比 ${fmt(rr,2)}，勝率只要高於 ${fmt(needWR,1)}% 就有正期望值。</div>`:"");
+  const lotsTxt=qty>=1000?`${fmt(Math.floor(qty/1000))} 張${qty%1000?" + "+fmt(qty%1000)+" 股":""}`:`${fmt(qty)} 股`;
+  out.innerHTML=[
+    ["建議部位",lotsTxt,`${fmt(qty)} 股・成交金額 ${fmt(notional)}`],
+    ["達標淨利",`<span class="up">${sgn(win.net)}</span>`,`${ticksT} 檔・${fmt((T-E)/E*100*(dir==="long"?1:-1),2)}%`],
+    ["停損淨損",`<span class="down">${sgn(loss.net)}</span>`,`${ticksS} 檔・預算 ${fmt(riskAmt)}`],
+    ["損益兩平",isFinite(be.c)?fp(be.c):"—",isFinite(be.ticks)?`需${dir==="long"?"上漲":"下跌"} ${be.ticks} 檔才回本`:""],
+  ].map(([k,v,s])=>`<div><span class="k">${k}</span><span class="v">${v}</span><span class="s">${s}</span></div>`).join("");
+  det.innerHTML=[
+    ["扣費後 R:R",fmt(rr,2)],["所需勝率",fmt(needWR,1)+"%"],["來回成本（達標）",fmt(win.cost)+" 元"],
+    ["證交稅",fmt(win.tx)+" 元"],["手續費 買／賣",`${fmt(win.fb)}／${fmt(win.fs)}`],["每檔價值",fmt(tk*qty/100)+" 元"],
+    ["漲停／跌停",`<span class="up">${fp(L.up)}</span>／<span class="down">${fp(L.dn)}</span>`],["今日漲跌",`<span class="${cls(E-refC)}">${sgn((E-refC)/refC*100,2)}%</span>`],
+  ].map(([k,v])=>`<div><span class="k">${k}</span><span class="v">${v}</span></div>`).join("");
+  drawLadder(dir,E,S,T,be.c,qty,kind,L,refC);
+}
+function stepsBetween(a,b,k){let n=0,c=a;if(b>a){while(c<b&&n<5000){c=nextUp(c,k);n++}}else{while(c>b&&n<5000){c=nextDn(c,k);n--}}return n}
+function drawLadder(dir,E,S,T,BE,qty,kind,L,refC){
+  const hi=Math.max(S,T),lo=Math.min(S,T);
+  let top=hi;for(let i=0;i<2&&top<L.up;i++)top=nextUp(top,kind);
+  let bot=lo;for(let i=0;i<2&&bot>L.dn;i++)bot=nextDn(bot,kind);
+  let rows=[],c=top;while(c>=bot&&rows.length<400){rows.push(c);c=nextDn(c,kind)}
+  // 檔數過多時，保留關鍵價位附近並以省略列帶過
+  if(rows.length>40){const keep=new Set();const near=x=>{const i=rows.indexOf(x);for(let j=i-3;j<=i+3;j++)if(j>=0&&j<rows.length)keep.add(j)};[top,E,S,T,BE,bot].forEach(near);
+    const r2=[];let gap=false;rows.forEach((x,i)=>{if(keep.has(i)){r2.push(x);gap=false}else if(!gap){r2.push(null);gap=true}});rows=r2}
+  const body=rows.map(x=>{
+    if(x==null)return`<tr><td class="l muted" colspan="5">⋯</td></tr>`;
+    const r=roundTrip(dir,E,x,qty,kind),tags=[];
+    let m="";if(x===E){m="mark-entry";tags.push("進場")}if(x===S){m="mark-stop";tags.push("停損")}if(x===T){m="mark-target";tags.push("目標")}if(x===BE){m+=" mark-be";tags.push("兩平")}
+    if(x===L.up)tags.push("漲停");if(x===L.dn)tags.push("跌停");
+    return`<tr class="${m}"><td class="l txt">${tags.join("・")}</td><td class="${cls(x-refC)}">${fp(x)}</td><td>${sgn(stepsBetween(E,x,kind))}</td><td class="${cls(r.net)}">${sgn(r.net)}</td><td class="${cls(r.net)}">${sgn(r.net/Math.round(E*qty/100)*100,2)}%</td></tr>`;
+  }).join("");
+  $("#ladder").innerHTML=`<table><thead><tr><th class="l">標記</th><th>價格</th><th>檔數</th><th>淨損益</th><th>報酬率</th></tr></thead><tbody>${body}</tbody></table>`;
+}
+PKEYS.forEach(k=>$("#"+k).addEventListener("input",calcPlan));
+
+/* ================= 盤中技術位 ================= */
+let bars=[],an=null;
+function parseCSV(txt){
+  const out=[];
+  txt.split(/\r?\n/).forEach(line=>{
+    const f=line.trim().split(/[,\t;]+|\s+/).filter(Boolean);
+    if(f.length<6)return;const n=f.slice(1,6).map(Number);if(n.some(x=>!isFinite(x)))return;
+    const tm=(f[0].match(/(\d{1,2}):(\d{2})/)||[]);if(!tm.length)return;
+    out.push({t:tm[1].padStart(2,"0")+":"+tm[2],o:n[0],h:n[1],l:n[2],c:n[3],v:n[4]});
+  });
+  return out;
+}
+function ema(arr,n){const k=2/(n+1);let e=null;return arr.map(x=>e=e==null?x:x*k+e*(1-k))}
+function analyze(b){
+  const orb=+$("#c_orb").value,ph=+$("#c_ph").value,pl=+$("#c_pl").value,pc=+$("#c_pc").value;
+  let pv=0,vv=0,pv2=0;const vwap=[],sd=[];
+  b.forEach(x=>{const tp=(x.h+x.l+x.c)/3;pv+=tp*x.v;vv+=x.v;pv2+=tp*tp*x.v;const m=vv?pv/vv:tp;vwap.push(m);sd.push(Math.sqrt(Math.max(0,(vv?pv2/vv:tp*tp)-m*m)))});
+  const closes=b.map(x=>x.c),e9=ema(closes,9),e21=ema(closes,21);
+  const startSec=toSec(b[0].t);const orBars=b.filter(x=>toSec(x.t)-startSec<orb*60);
+  const orH=Math.max(...orBars.map(x=>x.h)),orL=Math.min(...orBars.map(x=>x.l));
+  // RSI14、ATR14
+  let g=0,l=0,rsi=NaN;for(let i=1;i<b.length;i++){const d=b[i].c-b[i-1].c;if(i<=14){g+=Math.max(d,0);l+=Math.max(-d,0);if(i===14){g/=14;l/=14}}else{g=(g*13+Math.max(d,0))/14;l=(l*13+Math.max(-d,0))/14}if(i>=14)rsi=l===0?100:100-100/(1+g/l)}
+  let atr=NaN;const trs=b.map((x,i)=>i?Math.max(x.h-x.l,Math.abs(x.h-b[i-1].c),Math.abs(x.l-b[i-1].c)):x.h-x.l);
+  if(trs.length>=14){atr=trs.slice(0,14).reduce((a,c)=>a+c,0)/14;for(let i=14;i<trs.length;i++)atr=(atr*13+trs[i])/14}
+  // 昨日價位：CDP 與 Pivot
+  let lv={};
+  if(ph>0&&pl>0&&pc>0){const cdp=(ph+pl+2*pc)/4,r=ph-pl,P0=(ph+pl+pc)/3;
+    lv={AH:cdp+r,NH:2*cdp-pl,CDP:cdp,NL:2*cdp-ph,AL:cdp-r,R2:P0+r,R1:2*P0-pl,P:P0,S1:2*P0-ph,S2:P0-r,"昨高":ph,"昨低":pl}}
+  // 訊號
+  const sigs=[];let brokeH=false,brokeL=false;
+  for(let i=1;i<b.length;i++){
+    const x=b[i],p=b[i-1],inOR=toSec(x.t)-startSec<orb*60;
+    if(!inOR&&!brokeH&&x.c>orH){brokeH=true;sigs.push({t:x.t,d:1,m:`收盤站上開盤區間高 ${fmt(orH,2)}`})}
+    if(!inOR&&!brokeL&&x.c<orL){brokeL=true;sigs.push({t:x.t,d:-1,m:`收盤跌破開盤區間低 ${fmt(orL,2)}`})}
+    if(p.c<vwap[i-1]&&x.c>vwap[i])sigs.push({t:x.t,d:1,m:`站回 VWAP ${fmt(vwap[i],2)}`});
+    if(p.c>vwap[i-1]&&x.c<vwap[i])sigs.push({t:x.t,d:-1,m:`跌破 VWAP ${fmt(vwap[i],2)}`});
+    if(i>21&&e9[i-1]<=e21[i-1]&&e9[i]>e21[i])sigs.push({t:x.t,d:1,m:"EMA9 黃金交叉 EMA21"});
+    if(i>21&&e9[i-1]>=e21[i-1]&&e9[i]<e21[i])sigs.push({t:x.t,d:-1,m:"EMA9 死亡交叉 EMA21"});
+    if(i>=20){const avg=b.slice(i-20,i).reduce((a,c)=>a+c.v,0)/20;if(x.v>avg*2.5)sigs.push({t:x.t,d:x.c>=x.o?1:-1,m:`爆量 ${fmt(x.v/avg,1)} 倍（${x.c>=x.o?"紅K":"黑K"}）`})}
+    if(x.c>vwap[i]+2*sd[i]&&!(p.c>vwap[i-1]+2*sd[i-1]))sigs.push({t:x.t,d:0,m:"觸及 VWAP +2σ，追價風險高"});
+    if(x.c<vwap[i]-2*sd[i]&&!(p.c<vwap[i-1]-2*sd[i-1]))sigs.push({t:x.t,d:0,m:"觸及 VWAP −2σ，殺低風險高"});
+  }
+  // 多空判讀
+  const n=b.length-1,last=b[n];let score=0;const why=[];
+  if(last.c>vwap[n]){score++;why.push("價在 VWAP 之上")}else{score--;why.push("價在 VWAP 之下")}
+  if(e9[n]>e21[n]){score++;why.push("EMA9 > EMA21")}else{score--;why.push("EMA9 < EMA21")}
+  if(last.c>orH){score++;why.push("已突破開盤區間")}else if(last.c<orL){score--;why.push("已跌破開盤區間")}else why.push("仍在開盤區間內")
+  if(lv.CDP){if(last.c>lv.NH){score++;why.push("高於 CDP 近高")}else if(last.c<lv.NL){score--;why.push("低於 CDP 近低")}}
+  const bias=score>=2?["偏多","up"]:score<=-2?["偏空","down"]:["盤整","muted"];
+  return{vwap,sd,e9,e21,orH,orL,orEnd:orBars.length,rsi,atr,lv,sigs,bias,why,score};
+}
+function runChart(){
+  bars=parseCSV($("#c_csv").value);
+  LS.set("dt.chart",{csv:$("#c_csv").value,ph:$("#c_ph").value,pl:$("#c_pl").value,pc:$("#c_pc").value,orb:$("#c_orb").value});
+  if(bars.length<3){an=null;$("#c_info").textContent=bars.length?"至少需要 3 根 K 棒":"尚無資料";drawChart();["#c_levels","#c_sigs","#c_stats"].forEach(s=>$(s).innerHTML="");$("#c_bias").textContent="—";$("#c_biasWhy").textContent="";return}
+  an=analyze(bars);const n=bars.length-1,last=bars[n];
+  $("#c_info").textContent=`已讀取 ${bars.length} 根 K 棒（${bars[0].t}–${last.t}）`;
+  $("#c_last").innerHTML=`最新 <span class="num ${cls(last.c-(+$("#c_pc").value||bars[0].o))}">${fmt(last.c,2)}</span>`;
+  $("#c_bias").textContent=an.bias[0];$("#c_bias").className="bias "+an.bias[1];
+  $("#c_biasWhy").textContent=an.why.join("・")+`（分數 ${sgn(an.score)}）`;
+  const lvRows=[["開盤區間高",an.orH],["開盤區間低",an.orL],["VWAP",an.vwap[n]],["VWAP +1σ",an.vwap[n]+an.sd[n]],["VWAP −1σ",an.vwap[n]-an.sd[n]],...Object.entries(an.lv)].sort((a,b)=>b[1]-a[1]);
+  let placed=false;
+  $("#c_levels").innerHTML=`<table><tbody>${lvRows.map(([k,v])=>{let pre="";if(!placed&&v<last.c){placed=true;pre=`<tr class="mark-entry"><td class="l txt">▶ 現價</td><td>${fmt(last.c,2)}</td></tr>`}return pre+`<tr><td class="l txt">${k}</td><td class="${v>last.c?"up":"down"}">${fmt(v,2)}</td></tr>`}).join("")}${placed?"":`<tr class="mark-entry"><td class="l txt">▶ 現價</td><td>${fmt(last.c,2)}</td></tr>`}</tbody></table>`;
+  $("#c_sigs").innerHTML=an.sigs.length?an.sigs.slice().reverse().map(s=>`<div class="sig"><span class="tm">${s.t}</span><span class="${s.d>0?"up":s.d<0?"down":""}">${esc(s.m)}</span></div>`).join(""):`<p class="note">尚無訊號</p>`;
+  const hi=Math.max(...bars.map(x=>x.h)),lo=Math.min(...bars.map(x=>x.l)),vol=bars.reduce((a,c)=>a+c.v,0);
+  $("#c_stats").innerHTML=[["日內高／低",`${fmt(hi,2)}／${fmt(lo,2)}`],["日內振幅",fmt((hi-lo)/lo*100,2)+"%"],["ATR(14) 分K",fmt(an.atr,2)],["RSI(14)",fmt(an.rsi,1)],["累計量",fmt(vol)],["離 VWAP",`<span class="${cls(last.c-an.vwap[n])}">${sgn((last.c-an.vwap[n])/an.vwap[n]*100,2)}%</span>`]]
+    .map(([k,v])=>`<div><span class="k">${k}</span><span class="v">${v}</span></div>`).join("");
+  drawChart();
+}
+function setupCanvas(cv){const dpr=window.devicePixelRatio||1,w=cv.clientWidth,h=+cv.getAttribute("height");cv.width=w*dpr;cv.height=h*dpr;cv.style.height=h+"px";const x=cv.getContext("2d");x.setTransform(dpr,0,0,dpr,0,0);return{x,w,h}}
+function drawChart(){
+  const cv=$("#cv");if(cv.offsetParent===null)return;const{x,w,h}=setupCanvas(cv);
+  const ink=cssVar("--ink"),muted=cssVar("--muted"),line=cssVar("--line"),up=cssVar("--up"),dn=cssVar("--down"),acc=cssVar("--accent");
+  x.clearRect(0,0,w,h);x.font="11px "+cssVar("--font-num");
+  if(!an){x.fillStyle=muted;x.fillText("貼上分 K 資料，或按「載入示範資料」",16,30);return}
+  const padL=8,padR=58,padT=12,volH=60,padB=20,ph=h-padT-padB-volH-8;
+  const n=bars.length;let hi=-Infinity,lo=Infinity;
+  bars.forEach((b,i)=>{hi=Math.max(hi,b.h,an.vwap[i]+an.sd[i]*2);lo=Math.min(lo,b.l,an.vwap[i]-an.sd[i]*2)});
+  const lvVals=Object.values(an.lv).filter(v=>v<=hi*1.01&&v>=lo*0.99);lvVals.forEach(v=>{hi=Math.max(hi,v);lo=Math.min(lo,v)});
+  const pad=(hi-lo)*0.04||1;hi+=pad;lo-=pad;
+  const cw=(w-padL-padR)/n,X=i=>padL+cw*(i+.5),Y=v=>padT+(hi-v)/(hi-lo)*ph;
+  // 格線與價格軸
+  x.strokeStyle=line;x.fillStyle=muted;x.lineWidth=1;x.textAlign="left";
+  for(let k=0;k<=5;k++){const v=lo+(hi-lo)*k/5,y=Math.round(Y(v))+.5;x.beginPath();x.moveTo(padL,y);x.lineTo(w-padR,y);x.stroke();x.fillText(fmt(v,v>=100?1:2),w-padR+6,y+4)}
+  // 時間軸
+  x.textAlign="center";const step=Math.max(1,Math.ceil(n/6));for(let i=0;i<n;i+=step)x.fillText(bars[i].t,X(i),h-6);
+  // 開盤區間
+  x.fillStyle=muted;x.globalAlpha=.08;x.fillRect(padL,Y(an.orH),cw*an.orEnd,Y(an.orL)-Y(an.orH));x.globalAlpha=1;
+  x.setLineDash([4,4]);x.strokeStyle=muted;[an.orH,an.orL].forEach(v=>{x.beginPath();x.moveTo(padL,Y(v));x.lineTo(w-padR,Y(v));x.stroke()});
+  // CDP 價位
+  x.textAlign="left";Object.entries(an.lv).forEach(([k,v])=>{if(!["AH","NH","CDP","NL","AL"].includes(k)||v>hi||v<lo)return;x.strokeStyle=k==="CDP"?ink:k[1]==="H"?up:dn;x.globalAlpha=.45;x.beginPath();x.moveTo(padL,Y(v));x.lineTo(w-padR,Y(v));x.stroke();x.globalAlpha=.8;x.fillStyle=x.strokeStyle;x.fillText(k,padL+2,Y(v)-3);x.globalAlpha=1});
+  x.setLineDash([]);
+  const path=(arr,col,wd=1.5,dash)=>{x.strokeStyle=col;x.lineWidth=wd;x.setLineDash(dash||[]);x.beginPath();arr.forEach((v,i)=>i?x.lineTo(X(i),Y(v)):x.moveTo(X(i),Y(v)));x.stroke();x.setLineDash([])};
+  path(an.vwap.map((v,i)=>v+an.sd[i]*2),"#8a6fd1",1,[2,3]);path(an.vwap.map((v,i)=>v-an.sd[i]*2),"#8a6fd1",1,[2,3]);
+  path(an.vwap.map((v,i)=>v+an.sd[i]),"#8a6fd1",1);path(an.vwap.map((v,i)=>v-an.sd[i]),"#8a6fd1",1);
+  // K 棒（台股慣例：紅漲綠跌）
+  const vmax=Math.max(...bars.map(b=>b.v)),vb=h-padB;
+  bars.forEach((b,i)=>{const c=b.c>=b.o?up:dn;x.strokeStyle=x.fillStyle=c;x.lineWidth=1;const cx=Math.round(X(i))+.5;x.beginPath();x.moveTo(cx,Y(b.h));x.lineTo(cx,Y(b.l));x.stroke();
+    const bw=Math.max(1,cw*.66),top=Y(Math.max(b.o,b.c)),bh=Math.max(1,Math.abs(Y(b.o)-Y(b.c)));x.fillRect(X(i)-bw/2,top,bw,bh);
+    x.globalAlpha=.5;const vh=b.v/vmax*volH;x.fillRect(X(i)-bw/2,vb-vh,bw,vh);x.globalAlpha=1});
+  path(an.e9,"#e08a1e",1.3);path(an.e21,"#3aa6b9",1.3);path(an.vwap,acc,2.2);
+  // 最新價標籤
+  const lc=bars[n-1].c,ly=Y(lc);x.fillStyle=lc>=bars[n-1].o?up:dn;x.fillRect(w-padR+2,ly-9,padR-4,18);x.fillStyle="#fff";x.textAlign="left";x.fillText(fmt(lc,lc>=100?1:2),w-padR+6,ly+4);
+  // 訊號標記
+  an.sigs.forEach(s=>{if(!s.d)return;const i=bars.findIndex(b=>b.t===s.t);if(i<0)return;const b=bars[i];x.fillStyle=s.d>0?up:dn;x.beginPath();if(s.d>0){const y=Y(b.l)+8;x.moveTo(X(i),y);x.lineTo(X(i)-4,y+7);x.lineTo(X(i)+4,y+7)}else{const y=Y(b.h)-8;x.moveTo(X(i),y);x.lineTo(X(i)-4,y-7);x.lineTo(X(i)+4,y-7)}x.fill()});
+}
+function demoData(){
+  // 示範用隨機漫步資料（DEMO，非真實行情）
+  let seed=20261017;const rnd=()=>(seed=(seed*1103515245+12345)%2147483648)/2147483648;
+  const prev={h:1058,l:1032,c:1045};let p=1050;const rows=[];
+  for(let m=0;m<200;m++){const hh=9+Math.floor((m+1)/60),mm=(m+1)%60;const drift=m<20?0.4:m<90?0.15:m<140?-0.2:0.05;
+    const o=p;let c=o+(rnd()-.5+drift*.3)*4;c=Math.round(c);const hi=Math.max(o,c)+Math.round(rnd()*2),lo=Math.min(o,c)-Math.round(rnd()*2);
+    const v=Math.round((m<15?900:300)+rnd()*500+(m===38||m===112?2500:0));rows.push(`${String(hh).padStart(2,"0")}:${String(mm).padStart(2,"0")},${o},${hi},${lo},${c},${v}`);p=c}
+  $("#c_ph").value=prev.h;$("#c_pl").value=prev.l;$("#c_pc").value=prev.c;$("#c_csv").value="時間,開,高,低,收,量（示範資料）\n"+rows.join("\n");runChart();
+}
+$("#c_run").addEventListener("click",runChart);$("#c_demo").addEventListener("click",demoData);
+$("#c_orb").addEventListener("change",runChart);
+
+/* ================= 交易日誌 ================= */
+let trades=[],dbCol=null,storeMode="local";
+const getJDir=segInit("#jdirSeg",jPreview);
+function tradeNet(t){return roundTrip(t.dir,C(t.entry),C(t.exit),t.qty,t.kind||"stock").net}
+function tradeR(t){if(!t.stop)return NaN;const risk=Math.abs(t.entry-t.stop)*t.qty;return risk?tradeNet(t)/risk:NaN}
+function jPreview(){const e=+$("#j_in").value,x=+$("#j_out").value,q=+$("#j_qty").value;if(!(e>0&&x>0&&q>0)){$("#j_preview").textContent="";return}
+  const n=roundTrip(getJDir(),C(e),C(x),q,$("#j_kind").value).net;$("#j_preview").innerHTML=`淨損益 <b class="num ${cls(n)}">${sgn(n)}</b> 元`}
+["#j_in","#j_out","#j_qty","#j_kind"].forEach(s=>$(s).addEventListener("input",jPreview));
+
+function stats(list){
+  const nets=list.map(tradeNet),wins=nets.filter(n=>n>0),losses=nets.filter(n=>n<=0);
+  const sum=a=>a.reduce((x,y)=>x+y,0),total=sum(nets);
+  let eq=0,peak=0,mdd=0,streak=0,maxStreak=0;nets.forEach(n=>{eq+=n;peak=Math.max(peak,eq);mdd=Math.max(mdd,peak-eq);streak=n<=0?streak+1:0;maxStreak=Math.max(maxStreak,streak)});
+  const aw=wins.length?sum(wins)/wins.length:0,alv=losses.length?Math.abs(sum(losses))/losses.length:0;
+  const rs=list.map(tradeR).filter(isFinite);
+  return{n:list.length,total,wr:list.length?wins.length/list.length*100:NaN,aw,al:alv,payoff:alv?aw/alv:NaN,exp:list.length?total/list.length:NaN,pf:losses.length&&sum(losses)?sum(wins)/Math.abs(sum(losses)):NaN,mdd,maxStreak,avgR:rs.length?sum(rs)/rs.length:NaN,ruleRate:list.length?list.filter(t=>t.rule!==0).length/list.length*100:NaN};
+}
+function sortedTrades(){return trades.slice().sort((a,b)=>(a.date+String(a.ts)).localeCompare(b.date+String(b.ts)))}
+function renderJournal(){
+  const list=sortedTrades(),s=stats(list);
+  $("#j_kpi").innerHTML=[
+    ["累計淨損益",`<span class="${cls(s.total)}">${sgn(s.total)}</span>`,`${s.n} 筆交易`],
+    ["勝率",isFinite(s.wr)?fmt(s.wr,1)+"%":"—",`盈虧比 ${fmt(s.payoff,2)}`],
+    ["每筆期望值",`<span class="${cls(s.exp)}">${sgn(s.exp)}</span>`,`平均 R ${isFinite(s.avgR)?sgn(s.avgR,2):"—"}`],
+    ["獲利因子",fmt(s.pf,2),"總獲利 ÷ 總虧損"],
+    ["最大回撤",`<span class="down">${fmt(s.mdd)}</span>`,`最長連虧 ${s.maxStreak} 筆`],
+    ["守紀律比例",isFinite(s.ruleRate)?fmt(s.ruleRate,0)+"%":"—","照計畫執行的交易"],
+  ].map(([k,v,x])=>`<div><span class="k">${k}</span><span class="v">${v}</span><span class="s">${x}</span></div>`).join("");
+  const group=key=>{const m={};list.forEach(t=>{(m[t[key]]=m[t[key]]||[]).push(t)});return Object.entries(m).map(([k,v])=>[k,stats(v)]).sort((a,b)=>b[1].total-a[1].total)};
+  const gt=(title,g)=>`<table><thead><tr><th class="l">${title}</th><th>筆</th><th>勝率</th><th>淨損益</th></tr></thead><tbody>${g.map(([k,s])=>`<tr><td class="l txt">${esc(k)}</td><td>${s.n}</td><td>${fmt(s.wr,0)}%</td><td class="${cls(s.total)}">${sgn(s.total)}</td></tr>`).join("")||`<tr><td class="l txt muted" colspan="4">尚無資料</td></tr>`}</tbody></table>`;
+  $("#j_bySetup").innerHTML=gt("策略",group("setup"));$("#j_byMood").innerHTML=gt("情緒",group("mood"));
+  $("#j_table").innerHTML=list.length?`<table><thead><tr><th class="l">日期</th><th class="l">代號</th><th class="l">方向</th><th>進場</th><th>出場</th><th>股數</th><th>淨損益</th><th>R</th><th class="l">策略</th><th class="l">情緒</th><th class="l">筆記</th><th></th></tr></thead><tbody>${list.slice().reverse().map(t=>{const n=tradeNet(t),r=tradeR(t);return`<tr><td class="l">${esc(t.date)}</td><td class="l txt">${esc(t.sym)}</td><td class="l txt ${t.dir==="long"?"up":"down"}">${t.dir==="long"?"多":"空"}</td><td>${fmt(t.entry,2)}</td><td>${fmt(t.exit,2)}</td><td>${fmt(t.qty)}</td><td class="${cls(n)}">${sgn(n)}</td><td>${isFinite(r)?sgn(r,2):"—"}</td><td class="l txt">${esc(t.setup)}</td><td class="l txt">${esc(t.mood)}${t.rule===0?' <span class="pill up">違規</span>':""}</td><td class="l txt" style="white-space:normal;min-width:160px">${esc(t.note||"")}</td><td><button class="btn danger sm" data-del="${esc(t.id)}">刪除</button></td></tr>`}).join("")}</tbody></table>`:`<p class="note">還沒有交易紀錄。左側表單記下第一筆，統計與權益曲線會自動產生。</p>`;
+  drawEquity();renderRisk();
+}
+function drawEquity(){
+  const cv=$("#eq");if(cv.offsetParent===null)return;const{x,w,h}=setupCanvas(cv);
+  const list=sortedTrades(),muted=cssVar("--muted"),line=cssVar("--line"),up=cssVar("--up"),dn=cssVar("--down");
+  x.clearRect(0,0,w,h);x.font="11px "+cssVar("--font-num");
+  if(list.length<1){x.fillStyle=muted;x.fillText("記錄交易後顯示權益曲線",16,30);return}
+  const pts=[0];list.forEach(t=>pts.push(pts[pts.length-1]+tradeNet(t)));
+  let hi=Math.max(...pts,0),lo=Math.min(...pts,0);const pd=(hi-lo)*.1||1000;hi+=pd;lo-=pd;
+  const L=8,R=64,T=10,B=10,X=i=>L+(w-L-R)*i/(pts.length-1||1),Y=v=>T+(hi-v)/(hi-lo)*(h-T-B);
+  x.strokeStyle=line;x.fillStyle=muted;x.textAlign="left";
+  for(let k=0;k<=4;k++){const v=lo+(hi-lo)*k/4,y=Math.round(Y(v))+.5;x.beginPath();x.moveTo(L,y);x.lineTo(w-R,y);x.stroke();x.fillText(fmt(v),w-R+6,y+4)}
+  x.strokeStyle=muted;x.setLineDash([3,3]);x.beginPath();x.moveTo(L,Y(0));x.lineTo(w-R,Y(0));x.stroke();x.setLineDash([]);
+  const end=pts[pts.length-1],col=end>=0?up:dn;
+  x.beginPath();pts.forEach((v,i)=>i?x.lineTo(X(i),Y(v)):x.moveTo(X(i),Y(v)));x.lineTo(X(pts.length-1),Y(0));x.lineTo(X(0),Y(0));x.closePath();x.fillStyle=col;x.globalAlpha=.12;x.fill();x.globalAlpha=1;
+  x.strokeStyle=col;x.lineWidth=2;x.beginPath();pts.forEach((v,i)=>i?x.lineTo(X(i),Y(v)):x.moveTo(X(i),Y(v)));x.stroke();
+  x.fillStyle=col;x.beginPath();x.arc(X(pts.length-1),Y(end),4,0,7);x.fill();
+}
+async function addTrade(t){
+  if(dbCol){try{await dbCol.doc(t.id).set(t);return}catch(e){if(e&&e.code==="quota_exceeded"){alertStore("雲端日誌已達容量上限，請刪除舊紀錄後再新增。");return}alertStore("雲端寫入失敗，已改存在此瀏覽器。");dbCol=null;storeMode="local";updateStoreBadge()}}
+  trades.push(t);LS.set("dt.trades",trades);renderJournal();
+}
+async function delTrade(id){
+  if(storeMode==="db"&&dbCol){try{await dbCol.doc(id).delete()}catch{alertStore("刪除失敗，請稍後再試。")}return}
+  trades=trades.filter(t=>t.id!==id);LS.set("dt.trades",trades);renderJournal();
+}
+function alertStore(m){$("#j_store").textContent=m}
+function updateStoreBadge(){$("#j_store").textContent=storeMode==="db"?"已同步到你的私人雲端日誌":"儲存在此瀏覽器（換裝置不會同步）"}
+$("#j_form").addEventListener("submit",e=>{
+  e.preventDefault();
+  const t={id:"t"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),ts:Date.now(),date:$("#j_date").value,sym:$("#j_sym").value.trim(),dir:getJDir(),entry:+$("#j_in").value,exit:+$("#j_out").value,qty:Math.floor(+$("#j_qty").value),stop:+$("#j_stop").value||0,setup:$("#j_setup").value,mood:$("#j_mood").value,kind:$("#j_kind").value,rule:+$("#j_rule").value,note:$("#j_note").value.trim()};
+  if(!(t.entry>0&&t.exit>0&&t.qty>0&&t.sym&&t.date))return;
+  addTrade(t);["#j_in","#j_out","#j_stop","#j_note"].forEach(s=>$(s).value="");$("#j_preview").textContent="已記錄";
+});
+$("#j_table").addEventListener("click",e=>{const b=e.target.closest("[data-del]");if(!b)return;
+  if(b.dataset.armed){delTrade(b.dataset.del)}else{b.dataset.armed="1";b.textContent="確定刪除";setTimeout(()=>{if(b.isConnected){delete b.dataset.armed;b.textContent="刪除"}},3000)}});
+$("#j_copy").addEventListener("click",async()=>{
+  const rows=[["日期","代號","方向","進場","出場","股數","停損","淨損益","策略","情緒","守紀律","筆記"],...sortedTrades().map(t=>[t.date,t.sym,t.dir==="long"?"多":"空",t.entry,t.exit,t.qty,t.stop||"",tradeNet(t),t.setup,t.mood,t.rule===0?"否":"是",(t.note||"").replace(/,/g,"，")])];
+  const csv=rows.map(r=>r.join(",")).join("\n");const b=$("#j_copy");
+  try{await navigator.clipboard.writeText(csv);b.textContent="已複製"}catch{b.textContent="複製失敗"}setTimeout(()=>b.textContent="複製為 CSV",2000);
+});
+
+/* AI 教練 */
+$("#j_coach").addEventListener("click",async()=>{
+  const out=$("#j_coachOut"),btn=$("#j_coach"),sample=await use("sample");
+  if(!sample){out.textContent="此檢視無法使用 AI 教練（需在 claude.ai 登入後開啟）。";return}
+  const list=sortedTrades();if(list.length<1){out.textContent="請先記錄至少一筆交易。";return}
+  const s=stats(list),recent=list.slice(-40).map(t=>`${t.date} ${t.sym} ${t.dir==="long"?"多":"空"} 進${t.entry} 出${t.exit} ${t.qty}股 淨${tradeNet(t)} R=${isFinite(tradeR(t))?tradeR(t).toFixed(2):"-"} 策略:${t.setup} 情緒:${t.mood} ${t.rule===0?"違反計畫":"照計畫"} 筆記:${t.note||""}`).join("\n");
+  const prompt=`你是嚴格但務實的台股當沖交易教練。請用繁體中文、條列式，根據以下交易日誌給出檢討：
+1. 最大的問題（用數據指出，例如某情緒或策略虧最多）
+2. 表現最好、應該加碼練習的策略
+3. 風控與紀律的觀察（停損是否確實、是否報復性交易、交易次數是否過多）
+4. 下週可執行的 3 條具體規則（要有數字）
+不要給個股推薦或預測行情。控制在 350 字內。
+
+整體統計：筆數${s.n}、淨損益${s.total}元、勝率${fmt(s.wr,1)}%、盈虧比${fmt(s.payoff,2)}、期望值${fmt(s.exp)}元/筆、獲利因子${fmt(s.pf,2)}、最大回撤${s.mdd}元、最長連虧${s.maxStreak}筆、守紀律${fmt(s.ruleRate,0)}%。
+最近交易：
+${recent}`;
+  btn.disabled=true;out.textContent="分析中…";
+  try{await sample(prompt,{onText:({text})=>{out.textContent=text},cache:false})}
+  catch(e){out.textContent=e&&e.code==="not_granted"?"你沒有允許此頁使用 AI，可從頁面權限選單開啟。":e&&e.code==="rate_limited"?"使用太頻繁，請稍後再試。":"分析失敗："+(e&&e.message||"未知錯誤")}
+  finally{btn.disabled=false}
+});
+
+async function initStore(){
+  trades=LS.get("dt.trades",[]);renderJournal();
+  const db=await use("db"),user=await use("user");
+  const uid=user?await user.id().catch(()=>null):null;
+  if(!db||!uid){storeMode="local";updateStoreBadge();return}
+  dbCol=db.doc(`data/users/${uid}/journal`).collection("trades");
+  dbCol.onSnapshot(snap=>{
+    const remote=snap.docs.map(d=>d.data());
+    storeMode="db";
+    // 第一次連上雲端時，把此瀏覽器先前的本機紀錄搬上去
+    const local=LS.get("dt.trades",[]);
+    if(local.length&&!LS.get("dt.migrated",false)){LS.set("dt.migrated",true);const ids=new Set(remote.map(t=>t.id));(async()=>{for(const t of local)if(!ids.has(t.id)){try{await dbCol.doc(t.id).set(t)}catch{}}})()}
+    trades=remote;updateStoreBadge();renderJournal();
+  },()=>{storeMode="local";dbCol=null;trades=LS.get("dt.trades",[]);updateStoreBadge();renderJournal()});
+}
+
+/* ================= 風控與紀律 ================= */
+const RKEYS=["r_maxloss","r_lock","r_maxtrades","r_maxstreak","r_flat","r_noentry"];
+const CHECKS=["確認大盤與台指期夜盤方向、國際股市收盤","列出今日觀察清單（最多 5 檔），標好昨高、昨低、CDP","確認帳戶當沖額度與交割款足夠","每筆交易先寫好進場、停損、目標，並用計算頁確認 R:R ≥ 1.5","設定好單日最大虧損，觸發就關掉下單軟體","開盤前 15 分鐘不追價，等開盤區間成形","避開重大事件時段（央行、財報、除權息）或降低部位","收盤後 10 分鐘內完成交易日誌"];
+function renderRisk(){
+  const v={};RKEYS.forEach(k=>v[k]=$("#"+k).value);LS.set("dt.risk",v);
+  const today=twNow().date,list=sortedTrades().filter(t=>t.date===today),nets=list.map(tradeNet);
+  const pnl=nets.reduce((a,b)=>a+b,0);let peak=0,eq=0;nets.forEach(n=>{eq+=n;peak=Math.max(peak,eq)});
+  let streak=0;for(let i=nets.length-1;i>=0&&nets[i]<=0;i--)streak++;
+  const maxloss=+v.r_maxloss,lock=+v.r_lock,maxT=+v.r_maxtrades,maxS=+v.r_maxstreak;
+  const stops=[],warns=[];
+  if(maxloss>0&&pnl<=-maxloss)stops.push(`今日虧損 ${fmt(-pnl)} 元已達上限 ${fmt(maxloss)} 元`);
+  else if(maxloss>0&&pnl<=-maxloss*.7)warns.push(`今日虧損已達上限的 ${fmt(-pnl/maxloss*100,0)}%`);
+  if(maxT>0&&list.length>=maxT)stops.push(`今日已交易 ${list.length} 筆，達上限`);
+  if(maxS>0&&streak>=maxS)stops.push(`已連續虧損 ${streak} 筆`);
+  if(lock>0&&peak>=lock&&eq<=peak/2)stops.push(`獲利已從高點 ${fmt(peak)} 回吐一半以上，保護獲利`);
+  const st=stops.length?"stop":warns.length?"warn":"";
+  $("#lamp").className="risklamp "+st;$("#lampTxt").textContent=stops.length?"停止交易":warns.length?"接近風控上限":"風控正常";
+  $("#r_alert").innerHTML=stops.length?`<div class="alert stop">今日停止交易：${stops.join("；")}。關掉下單軟體，去寫日誌。</div>`:warns.length?`<div class="alert warn">${warns.join("；")}，請降低部位或停手。</div>`:`<div class="alert ok">今日風控正常，照計畫交易。</div>`;
+  const left=maxloss>0?maxloss+Math.min(pnl,0):NaN;
+  $("#r_kpi").innerHTML=[
+    ["今日已實現",`<span class="${cls(pnl)}">${sgn(pnl)}</span>`,today],
+    ["剩餘可虧額度",fmt(left),`上限 ${fmt(maxloss)}`],
+    ["今日筆數",`${list.length} / ${maxT||"∞"}`,`勝 ${nets.filter(n=>n>0).length}・敗 ${nets.filter(n=>n<=0).length}`],
+    ["目前連虧",`${streak} / ${maxS||"∞"}`,"達上限即停手"],
+  ].map(([k,v,s])=>`<div><span class="k">${k}</span><span class="v">${v}</span><span class="s">${s}</span></div>`).join("");
+}
+RKEYS.forEach(k=>$("#"+k).addEventListener("input",()=>{renderRisk();tickClock()}));
+function renderChecks(){
+  const key="dt.ck."+twNow().date,st=LS.get(key,[]);
+  $("#ck").innerHTML=CHECKS.map((c,i)=>`<label class="${st[i]?"done":""}"><input type="checkbox" id="ck${i}" data-i="${i}" ${st[i]?"checked":""}><span>${c}</span></label>`).join("");
+  const done=st.filter(Boolean).length;$("#ck_prog").textContent=`${done} / ${CHECKS.length}`;$("#ck_bar").style.width=done/CHECKS.length*100+"%";
+}
+$("#ck").addEventListener("change",e=>{const i=+e.target.dataset.i,key="dt.ck."+twNow().date,st=LS.get(key,[]);st[i]=e.target.checked;LS.set(key,st);renderChecks()});
+$("#ck_reset").addEventListener("click",()=>{LS.set("dt.ck."+twNow().date,[]);renderChecks()});
+
+/* ================= 即時盯盤（本機版） ================= */
+let LIVE=false,liveTimer=null,barTimer=null,lastQ={},focus=LS.get("dt.focus","2330"),alerts=LS.get("dt.alerts",[]),audioCtx=null,tvLoaded=null,tvSym="";
+const tvSymbol=c=>{const q=lastQ[c];return(q&&q.ex==="otc"?"TPEX:":"TWSE:")+c};
+const tvUrl=c=>"https://www.tradingview.com/chart/?symbol="+encodeURIComponent(tvSymbol(c));
+async function api(path){const r=await fetch(path,{cache:"no-store"});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||("HTTP "+r.status));return j}
+async function detectLive(){
+  try{const ctl=new AbortController();setTimeout(()=>ctl.abort(),2500);const r=await fetch("/api/ping",{cache:"no-store",signal:ctl.signal});const j=await r.json();LIVE=!!(j&&j.ok)}catch{LIVE=false}
+  $("#lv_off").hidden=LIVE;$("#lv_on").hidden=!LIVE;$("#c_liveRow").hidden=!LIVE;
+  if(!LIVE)return;
+  $("#liveTxt").textContent="即時模式・連線中";$("#lv_codes").value=LS.get("dt.codes",$("#lv_codes").value);$("#lv_int").value=LS.get("dt.int","5");
+  $("#c_auto").checked=LS.get("dt.cauto",true);
+  renderAlerts();pollQuotes();restartPoll();setupBarTimer();if(!$('[data-page="live"]').hidden)loadTV(true);
+}
+function restartPoll(){clearInterval(liveTimer);liveTimer=setInterval(pollQuotes,Math.max(3,+$("#lv_int").value)*1000)}
+function wlCodes(){const set=new Set($("#lv_codes").value.toUpperCase().split(/[\s,，、]+/).filter(c=>/^[0-9A-Z]{4,6}$/.test(c)));if(focus)set.add(focus);alerts.forEach(a=>!a.done&&set.add(a.code));return[...set].slice(0,30)}
+async function pollQuotes(){
+  const codes=wlCodes();if(!codes.length)return;
+  try{const j=await api("/api/quote?codes="+codes.join(","));Object.assign(lastQ,j.quotes);
+    $("#liveDot").className="live-dot on";$("#lv_status").textContent=`證交所報價・更新於 ${j.fetchedAt}`+(codes.some(c=>!j.quotes[c])?`・查無：${codes.filter(c=>!j.quotes[c]).join("、")}`:"");
+    renderWatch();renderFocus();checkAlerts();
+  }catch(e){$("#liveDot").className="live-dot err";$("#liveTxt").textContent="報價中斷";$("#lv_status").textContent="報價取得失敗："+e.message+"（會自動重試）"}
+}
+function renderWatch(){
+  const codes=$("#lv_codes").value.toUpperCase().split(/[\s,，、]+/).filter(Boolean);
+  const rows=codes.map(c=>{const q=lastQ[c];if(!q)return`<tr data-c="${esc(c)}"><td class="l">${esc(c)}</td><td class="l txt muted" colspan="11">等待報價…</td></tr>`;
+    const toUp=q.limitUp&&q.price?(q.limitUp-q.price)/q.price*100:NaN,toDn=q.limitDown&&q.price?(q.price-q.limitDown)/q.price*100:NaN;
+    const amp=q.high&&q.low&&q.prev?(q.high-q.low)/q.prev*100:NaN;
+    return`<tr data-c="${esc(c)}" class="${c===focus?"sel":""}"><td class="l">${esc(c)}</td><td class="l txt">${esc(q.name||"")}</td><td class="${cls(q.change)}">${q.price?fmt(q.price,2):"—"}${q.estimated?"*":""}</td><td class="${cls(q.change)}">${sgn(q.change,2)}</td><td class="${cls(q.change)}">${isFinite(q.changePct)?sgn(q.changePct,2)+"%":"—"}</td><td>${fmt(q.open,2)}</td><td class="up">${fmt(q.high,2)}</td><td class="down">${fmt(q.low,2)}</td><td>${fmt(q.volume)}</td><td>${fmt(amp,2)}%</td><td class="${toUp<1.5?"up":""}">${fmt(toUp,2)}%</td><td class="${toDn<1.5?"down":""}">${fmt(toDn,2)}%</td></tr>`}).join("");
+  $("#wl").innerHTML=`<table><thead><tr><th class="l">代號</th><th class="l">名稱</th><th>成交</th><th>漲跌</th><th>幅度</th><th>開盤</th><th>最高</th><th>最低</th><th>量（張）</th><th>振幅</th><th>距漲停</th><th>距跌停</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+$("#wl").addEventListener("click",e=>{const tr=e.target.closest("tr[data-c]");if(!tr)return;setFocus(tr.dataset.c)});
+function setFocus(c){focus=c;LS.set("dt.focus",c);renderWatch();renderFocus();loadTV(true);$("#c_autoSym").textContent=c;if($("#c_auto").checked)loadBars();if(!lastQ[c])pollQuotes()}
+function renderFocus(){
+  const q=lastQ[focus];$("#c_autoSym").textContent=focus;$("#fq_tv").href=tvUrl(focus);$("#fq_tv").textContent=`在 TradingView 開啟 ${focus}`;
+  if(!q){$("#fq_title").textContent=focus;return}
+  if(tvSym&&tvSym!==tvSymbol(focus))loadTV(false);
+  $("#fq_title").textContent=`${q.code} ${q.name||""}`;$("#fq_time").textContent=`${q.time||""}${q.ex==="otc"?"・上櫃":"・上市"}`;
+  $("#fq_px").textContent=q.price?fmt(q.price,2):"—";$("#fq_px").className="px "+cls(q.change);
+  $("#fq_chg").innerHTML=`<span class="${cls(q.change)}">${sgn(q.change,2)}（${isFinite(q.changePct)?sgn(q.changePct,2)+"%":"—"}）</span>${q.estimated?' <span class="note">*暫無成交，以買賣中價估計</span>':""}`;
+  $("#liveTxt").innerHTML=`${esc(q.code)} <b class="${cls(q.change)}">${q.price?fmt(q.price,2):"—"}</b> <span class="${cls(q.change)}">${isFinite(q.changePct)?sgn(q.changePct,2)+"%":""}</span>`;
+  $("#fq_kv").innerHTML=[["昨收",fmt(q.prev,2)],["開盤",fmt(q.open,2)],["最高",`<span class="up">${fmt(q.high,2)}</span>`],["最低",`<span class="down">${fmt(q.low,2)}</span>`],["漲停",`<span class="up">${fmt(q.limitUp,2)}</span>`],["跌停",`<span class="down">${fmt(q.limitDown,2)}</span>`],["累計量",fmt(q.volume)+" 張"],["單量",fmt(q.lastVol)+" 張"]]
+    .map(([k,v])=>`<div><span class="k">${k}</span><span class="v">${v}</span></div>`).join("");
+  const n=Math.max(q.bids.length,q.asks.length,5),mx=Math.max(1,...q.bids.map(b=>b.v),...q.asks.map(a=>a.v));
+  const sb=q.bids.reduce((a,b)=>a+b.v,0),sa=q.asks.reduce((a,b)=>a+b.v,0);
+  let rows="";for(let i=0;i<n;i++){const b=q.bids[i],a=q.asks[i];
+    rows+=`<tr><td><span class="bar" style="width:${b?b.v/mx*60:0}px;background:var(--up)"></span> ${b?fmt(b.v):""}</td><td class="up">${b&&b.p?fmt(b.p,2):"—"}</td><td class="down">${a&&a.p?fmt(a.p,2):"—"}</td><td class="l">${a?fmt(a.v):""} <span class="bar" style="width:${a?a.v/mx*60:0}px;background:var(--down)"></span></td></tr>`}
+  $("#fq_book").innerHTML=`<table class="book"><thead><tr><th>買量</th><th>買價</th><th>賣價</th><th class="l">賣量</th></tr></thead><tbody>${rows}<tr><td>${fmt(sb)}</td><td colspan="2" style="text-align:center" class="txt">${sb+sa?`內外盤力道 買 ${fmt(sb/(sb+sa)*100,0)}%`:""}</td><td class="l">${fmt(sa)}</td></tr></tbody></table>`;
+}
+$("#lv_codes").addEventListener("change",()=>{LS.set("dt.codes",$("#lv_codes").value);pollQuotes()});
+$("#lv_int").addEventListener("change",()=>{LS.set("dt.int",$("#lv_int").value);restartPoll()});
+$("#fq_toPlan").addEventListener("click",()=>{const q=lastQ[focus];if(!q||!q.price)return;
+  $("#p_sym").value=`${q.code} ${q.name||""}`.trim();if(q.prev)$("#p_ref").value=q.prev;$("#p_entry").value=q.price;$("#p_kind").value=/^00/.test(q.code)?"etf":"stock";$("#p_manual").value="";
+  const k=$("#p_kind").value,E=floorTick(C(q.price),k),d=getDir(),t=tickC(E,k);
+  $("#p_stop").value=P(d==="long"?E-t*8:E+t*8);$("#p_target").value=P(d==="long"?E+t*20:E-t*20);
+  calcPlan();showTab("plan");toast(`已帶入 ${q.code} 現價 ${fmt(q.price,2)}，停損／目標暫設 8／20 檔，請依計畫調整`)});
+$("#fq_toChart").addEventListener("click",async()=>{await loadBars();showTab("chart")});
+async function loadBars(){
+  if(!LIVE||!focus)return;
+  try{const j=await api("/api/bars?code="+focus);
+    if(j.prev){$("#c_ph").value=j.prev.high;$("#c_pl").value=j.prev.low;$("#c_pc").value=j.prev.close}
+    $("#c_csv").value=`時間,開,高,低,收,量（${focus}・${j.source}）\n`+j.bars.map(b=>b.join(",")).join("\n");
+    $("#c_title").textContent=`${focus} ${lastQ[focus]?.name||""} 分時走勢`;runChart();
+  }catch(e){$("#c_info").textContent="分 K 取得失敗："+e.message}
+}
+function setupBarTimer(){clearInterval(barTimer);if($("#c_auto").checked){loadBars();barTimer=setInterval(loadBars,30000)}}
+$("#c_auto").addEventListener("change",()=>{LS.set("dt.cauto",$("#c_auto").checked);setupBarTimer()});
+
+/* 到價提醒 */
+function renderAlerts(){
+  $("#al_list").innerHTML=alerts.length?`<table><thead><tr><th class="l">代號</th><th class="l">條件</th><th>價格</th><th class="l">備註</th><th class="l">狀態</th><th></th></tr></thead><tbody>${alerts.map((a,i)=>`<tr><td class="l">${esc(a.code)}</td><td class="l txt">${a.op==="ge"?"漲到 ≥":"跌到 ≤"}</td><td>${fmt(a.px,2)}</td><td class="l txt">${esc(a.note||"")}</td><td class="l txt">${a.done?`<span class="pill up">已觸發 ${esc(a.done)}</span>`:'<span class="pill muted">監控中</span>'}</td><td><button class="btn danger sm" data-ai="${i}">刪除</button></td></tr>`).join("")}</tbody></table>`:`<p class="note">尚無提醒。可設定突破昨高、跌破 VWAP 等關鍵價。</p>`;
+}
+$("#al_form").addEventListener("submit",e=>{e.preventDefault();const code=$("#al_code").value.trim().toUpperCase(),px=+$("#al_px").value;if(!/^[0-9A-Z]{4,6}$/.test(code)||!(px>0))return;
+  alerts.push({code,op:$("#al_op").value,px,note:$("#al_note").value.trim(),done:""});LS.set("dt.alerts",alerts);renderAlerts();$("#al_px").value=$("#al_note").value="";pollQuotes()});
+$("#al_list").addEventListener("click",e=>{const b=e.target.closest("[data-ai]");if(!b)return;alerts.splice(+b.dataset.ai,1);LS.set("dt.alerts",alerts);renderAlerts()});
+let planFired={};
+function checkAlerts(){
+  let changed=false;const now=twNow().hms;
+  alerts.forEach(a=>{const q=lastQ[a.code];if(a.done||!q||!q.price||q.estimated)return;
+    if(a.op==="ge"?q.price>=a.px:q.price<=a.px){a.done=now;changed=true;fire(`${a.code} ${q.name||""} ${a.op==="ge"?"漲到":"跌到"} ${fmt(q.price,2)}（設定 ${fmt(a.px,2)}）${a.note?"・"+a.note:""}`)}});
+  if(changed){LS.set("dt.alerts",alerts);renderAlerts()}
+  if($("#al_plan").checked){const code=($("#p_sym").value.match(/[0-9A-Z]{4,6}/)||[])[0],q=code&&lastQ[code];
+    if(q&&q.price&&!q.estimated){const d=getDir(),st=+$("#p_stop").value,tg=+$("#p_target").value,key=`${code}|${d}|${st}|${tg}`;planFired[key]=planFired[key]||{};const f=planFired[key];
+      const hitS=d==="long"?q.price<=st:q.price>=st,hitT=d==="long"?q.price>=tg:q.price<=tg;
+      if(st&&hitS&&!f.s){f.s=1;fire(`⚠ ${code} 觸及停損 ${fmt(st,2)}，現價 ${fmt(q.price,2)}，照計畫出場`)}
+      if(tg&&hitT&&!f.t){f.t=1;fire(`${code} 到達目標價 ${fmt(tg,2)}，現價 ${fmt(q.price,2)}`)}}}
+}
+function fire(msg){toast(msg,12000);beep();try{if("Notification"in window&&Notification.permission==="granted")new Notification("當沖戰情室",{body:msg})}catch{}}
+function toast(msg,ms=5000){const d=document.createElement("div");d.textContent=msg;$("#toast").appendChild(d);setTimeout(()=>d.remove(),ms)}
+function beep(){if(!audioCtx)return;try{const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.frequency.value=880;o.connect(g);g.connect(audioCtx.destination);g.gain.setValueAtTime(.001,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(.3,audioCtx.currentTime+.02);g.gain.exponentialRampToValueAtTime(.001,audioCtx.currentTime+.6);o.start();o.stop(audioCtx.currentTime+.6)}catch{}}
+$("#al_sound").addEventListener("click",async()=>{try{audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)();await audioCtx.resume()}catch{}
+  try{if("Notification"in window&&Notification.permission==="default")await Notification.requestPermission()}catch{}
+  beep();$("#al_sound").textContent="聲音已啟用"+("Notification"in window&&Notification.permission==="granted"?"・通知已允許":"")});
+
+/* TradingView 官方嵌入圖表（僅本機版載入） */
+function loadTV(force){
+  if(!LIVE||$('[data-page="live"]').hidden)return;
+  const sym=tvSymbol(focus);if(!force&&sym===tvSym)return;tvSym=sym;
+  const dark=document.documentElement.dataset.theme==="dark"||(document.documentElement.dataset.theme!=="light"&&matchMedia("(prefers-color-scheme: dark)").matches);
+  const mk=()=>{$("#tvbox").innerHTML='<div id="tv_inner" style="height:100%"></div>';
+    new TradingView.widget({container_id:"tv_inner",symbol:sym,interval:"1",timezone:"Asia/Taipei",theme:dark?"dark":"light",style:"1",locale:"zh_TW",autosize:true,allow_symbol_change:true,hide_side_toolbar:false,studies:["VWAP@tv-basicstudies","Volume@tv-basicstudies"]})};
+  if(window.TradingView)return mk();
+  tvLoaded=tvLoaded||new Promise((ok,no)=>{const s=document.createElement("script");s.src="https://s3.tradingview.com/tv.js";s.onload=ok;s.onerror=no;document.head.appendChild(s)});
+  tvLoaded.then(mk,()=>{$("#tv_note").textContent="TradingView 圖表載入失敗";$("#tvbox").innerHTML=`<p class="note" style="padding:16px">無法載入 TradingView，請確認網路，或<a href="${tvUrl(focus)}" target="_blank" rel="noopener">直接到 TradingView 開啟</a>。</p>`;tvLoaded=null});
+}
+
+/* ================= 設定與啟動 ================= */
+SKEYS.forEach(k=>$("#"+k).addEventListener("input",()=>{const s={};SKEYS.forEach(x=>s[x]=$("#"+x).value);LS.set("dt.settings",s);calcPlan();renderJournal();jPreview()}));
+loadSettings();
+const pv=LS.get("dt.plan",null);if(pv)PKEYS.forEach(k=>{if(pv[k]!=null)$("#"+k).value=pv[k]});
+if(LS.get("dt.dir","long")==="short")$('#dirSeg [data-dir="short"]').click();
+const rv=LS.get("dt.risk",null);if(rv)RKEYS.forEach(k=>{if(rv[k]!=null)$("#"+k).value=rv[k]});
+$("#j_date").value=twNow().date;
+calcPlan();renderChecks();
+const cv=LS.get("dt.chart",null);
+if(cv&&cv.csv){$("#c_csv").value=cv.csv;$("#c_ph").value=cv.ph;$("#c_pl").value=cv.pl;$("#c_pc").value=cv.pc;$("#c_orb").value=cv.orb||15;runChart()}else demoData();
+initStore();
+detectLive();
+tickClock();setInterval(tickClock,1000);
+showTab(LS.get("dt.tab","plan"));
+let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{drawChart();drawEquity()},120)});
+matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change",()=>{drawChart();drawEquity()});
+new MutationObserver(()=>{drawChart();drawEquity()}).observe(document.documentElement,{attributes:true,attributeFilter:["data-theme"]});
+})();
+</script>
