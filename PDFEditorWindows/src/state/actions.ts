@@ -388,6 +388,20 @@ export async function compressDocument(key: string, level: CompressLevel, keepPa
   });
 }
 
+/** 切換並排比較檢視（需要至少兩份開啟中的文件）。 */
+export function toggleCompare() {
+  const s = getState();
+  if (s.compare) {
+    setState({ compare: false });
+    return;
+  }
+  if (s.tabs.length < 2) {
+    toast("請先開啟兩份以上的文件再比較");
+    return;
+  }
+  setState({ compare: true });
+}
+
 // MARK: - 批次處理
 
 export type BatchOp =

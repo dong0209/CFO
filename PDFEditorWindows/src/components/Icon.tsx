@@ -50,6 +50,7 @@ const PATHS: Record<string, string> = {
   flatten: "M4 8l8-4 8 4-8 4zM4 12l8 4 8-4M4 16l8 4 8-4",
   split: "M6 3h12v7H6zM6 14h12v7H6zM3 12h3M18 12h3",
   export: "M12 3v12M8 7l4-4 4 4M5 13v7h14v-7",
+  compare: "M4 4h7v16H4zM13 4h7v16h-7z",
   help: "M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18zM9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.7M12 17h.01",
 };
 

@@ -256,3 +256,17 @@ hr { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
 .textbox-input { width: 100%; box-sizing: border-box; min-height: 120px; line-height: 1.3; resize: vertical; }
 .inline-text-status .warning { color: var(--danger); font-weight: 600; }
 .region-select { fill: rgba(15, 108, 189, 0.12); stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 3; }
+
+/* 並排比較 */
+.compare { position: fixed; inset: 0; z-index: 150; background: var(--bg); display: flex; flex-direction: column; }
+.compare-top { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.compare-top select { max-width: 260px; }
+.compare-vs { color: var(--muted); }
+.compare-sync { margin: 0; }
+.compare-body { flex: 1; display: flex; min-height: 0; }
+.compare-pane { flex: 1; overflow: auto; background: var(--bg); padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.compare-pane.empty { background: var(--surface); }
+.compare-divider { width: 1px; background: var(--border); }
+.compare-page { position: relative; box-shadow: var(--shadow); background: #fff; }
+.compare-page canvas { display: block; }
+.compare-page-num { position: absolute; top: 4px; left: 6px; background: rgba(0,0,0,0.55); color: #fff; padding: 1px 6px; border-radius: 4px; }

@@ -255,6 +255,18 @@ try {
     assert.ok(!sample.needsPassword(), "批次輸出的檔案不應需要密碼");
   }
 
+  step("並排比較兩份文件");
+  await openFiles([beta]);
+  await waitTabName("Beta.pdf");
+  await menu("compare");
+  await page.locator(".compare").waitFor({ timeout: 10000 });
+  assert.equal(await page.locator(".compare-pane").count(), 2, "應有左右兩個比較面板");
+  await page.waitForFunction(() => document.querySelectorAll(".compare-page canvas").length > 0, null, { timeout: 10000 });
+  await page.waitForTimeout(400);
+  await shot("13-並排比較");
+  await page.keyboard.press("Escape");
+  await page.waitForSelector(".compare", { state: "detached", timeout: 5000 });
+
   step("合併多個 PDF");
   await mockOpen([alpha, beta]);
   await menu("merge");

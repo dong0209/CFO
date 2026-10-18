@@ -89,6 +89,8 @@ function buildMenu({ send, recent, openRecent }) {
         item("連續捲動", "layout-continuous"),
         item("雙頁", "layout-two"),
         { type: "separator" },
+        item("並排比較兩份文件…", "compare"),
+        { type: "separator" },
         item("第一頁\tHome", "first-page"),
         item("上一頁\tPage Up", "prev-page"),
         item("下一頁\tPage Down", "next-page"),

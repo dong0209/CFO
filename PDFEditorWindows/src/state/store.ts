@@ -61,6 +61,7 @@ export interface AppState {
   pendingImage: PendingImage | null;
   sidebar: boolean;
   sidebarTab: SidebarTab;
+  compare: boolean;
   progress: { title: string; done: number; total: number } | null;
   toast: { text: string; id: number } | null;
   recent: string[];
@@ -93,6 +94,7 @@ let state: AppState = {
   pendingImage: null,
   sidebar: true,
   sidebarTab: "thumbnails",
+  compare: false,
   progress: null,
   toast: null,
   recent: [],
