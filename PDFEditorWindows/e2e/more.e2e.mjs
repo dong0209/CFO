@@ -1,7 +1,7 @@
 // 端對端測試（第二部分）：頁面管理、合併／擷取、加密檔開啟、書籤、匯出、復原與影像編輯的裁切與旋轉。
 // 用法：npm run build && xvfb-run -a node e2e/more.e2e.mjs
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -229,6 +229,30 @@ try {
     const doc = mupdf.Document.openDocument(readFileSync(compressed), "application/pdf");
     assert.ok(!doc.needsPassword(), "壓縮後（未保留密碼）不應需要密碼");
     assert.equal(doc.countPages(), 2);
+  }
+
+  step("批次處理：移除整個資料夾所有 PDF 的密碼與限制");
+  // 讓資料夾挑選回傳 work（來源與輸出都用它）
+  await app.evaluate(({ dialog }, w) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [w] }); }, work);
+  await menu("batch");
+  await page.locator(".dialog").waitFor();
+  await page.locator(".dialog .field button").nth(0).click(); // 來源資料夾
+  await page.waitForFunction(() => /找到 \d+ 個/.test(document.querySelector(".dialog")?.textContent || ""), null, { timeout: 10000 });
+  await page.locator(".dialog .field button").nth(1).click(); // 輸出資料夾
+  await page.locator(".dialog .primary", { hasText: "開始處理" }).click();
+  await page.locator('.dialog:has-text("批次處理結果")').waitFor({ timeout: 60000 });
+  const batchResult = await page.locator(".dialog").textContent();
+  assert.ok(/完成 \d+ 個檔案/.test(batchResult), `批次結果應回報完成數：${batchResult}`);
+  assert.ok(/需要密碼/.test(batchResult), "受密碼保護的 Locked 編輯.pdf 應被略過");
+  await page.locator(".dialog .primary", { hasText: "確定" }).click();
+  await page.waitForTimeout(300);
+  {
+    const outDir = readdirSync(work).map((n) => join(work, n)).find((p) => statSync(p).isDirectory() && p.includes("移除密碼與限制"));
+    assert.ok(outDir, "應建立批次輸出子資料夾");
+    const outputs = readdirSync(outDir).filter((n) => n.toLowerCase().endsWith(".pdf"));
+    assert.ok(outputs.length >= 1, "批次輸出資料夾應有處理後的 PDF");
+    const sample = mupdf.Document.openDocument(readFileSync(join(outDir, outputs[0])), "application/pdf");
+    assert.ok(!sample.needsPassword(), "批次輸出的檔案不應需要密碼");
   }
 
   step("合併多個 PDF");

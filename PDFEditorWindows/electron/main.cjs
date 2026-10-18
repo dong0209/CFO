@@ -189,6 +189,18 @@ function registerIpc() {
     return result.canceled ? null : result.filePaths[0];
   });
 
+  // 批次處理：列出資料夾中的 PDF（僅該層），以及建立輸出用的子資料夾
+  ipcMain.handle("folder:list-pdfs", async (_e, folder) => {
+    const names = (await fsp.readdir(folder)).filter((n) => n.toLowerCase().endsWith(".pdf"));
+    return names.sort((a, b) => a.localeCompare(b, "zh-Hant", { numeric: true })).map((n) => path.join(folder, n));
+  });
+
+  ipcMain.handle("folder:ensure", async (_e, parent, name) => {
+    const dir = path.join(parent, name);
+    await fsp.mkdir(dir, { recursive: true });
+    return dir;
+  });
+
   // 先寫入暫存檔再取代，避免寫到一半失敗時損毀原檔
   ipcMain.handle("file:write", async (_e, filePath, data) => {
     const temp = `${filePath}.${process.pid}.tmp`;

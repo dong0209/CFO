@@ -1,5 +1,5 @@
 import { indicesFromRanges } from "../engine/pageRanges";
-import type { CompressLevel, ImageFormat, SaveOptions } from "../engine/types";
+import type { CompressLevel, ImageFormat, PageNumberOptions, SaveOptions, WatermarkOptions } from "../engine/types";
 import { alertDialog, confirmDialog, hasOpenModal, prompt } from "../components/Modal";
 import { api, type LoadedFile } from "../lib/api";
 import { engine } from "../lib/engine";
@@ -386,6 +386,97 @@ export async function compressDocument(key: string, level: CompressLevel, keepPa
     const saved = before > 0 ? Math.max(0, Math.round((1 - data.length / before) * 100)) : 0;
     await alertDialog("壓縮完成", `已儲存至「${baseName(path)}」\n壓縮前約 ${formatBytes(before)}，壓縮後 ${formatBytes(data.length)}（縮小約 ${saved}%）`);
   });
+}
+
+// MARK: - 批次處理
+
+export type BatchOp =
+  | { kind: "remove-security" }
+  | { kind: "compress"; level: CompressLevel }
+  | { kind: "watermark"; options: WatermarkOptions }
+  | { kind: "page-numbers"; options: PageNumberOptions }
+  | { kind: "images"; format: ImageFormat; dpi: number };
+
+const BATCH_OP_TITLES: Record<BatchOp["kind"], string> = {
+  "remove-security": "移除密碼與限制",
+  compress: "壓縮檔案大小",
+  watermark: "加入浮水印",
+  "page-numbers": "加入頁碼",
+  images: "轉為圖片",
+};
+
+/**
+ * 對多個檔案批次執行同一項操作，輸出到指定資料夾下的子資料夾（不覆蓋原始檔案）。
+ * 受密碼保護而無法開啟的檔案會被略過並列在結果中。
+ */
+export async function runBatch(files: string[], outputRoot: string, op: BatchOp): Promise<void> {
+  if (!files.length) return;
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, "").replace(/(\d{8})(\d{4})/, "$1-$2");
+  const outDir = await guard("無法建立輸出資料夾", () => api().ensureFolder(outputRoot, `${BATCH_OP_TITLES[op.kind]} ${stamp}`));
+  if (!outDir) return;
+
+  let ok = 0;
+  let skipped = 0;
+  let failed = 0;
+  const problems: string[] = [];
+  setState({ progress: { title: "批次處理中…", done: 0, total: files.length } });
+  try {
+    for (const [index, path] of files.entries()) {
+      const name = baseName(path);
+      const fileStem = name.replace(/\.pdf$/i, "");
+      setState({ progress: { title: `處理中：${name}（${index + 1}/${files.length}）`, done: index, total: files.length } });
+      let engineId: number | null = null;
+      try {
+        const file = await api().readFile(path);
+        const opened = await engine.open(file.data);
+        engineId = opened.id;
+        if (opened.needsPassword) {
+          skipped++;
+          problems.push(`${name}：需要密碼，已略過`);
+          continue;
+        }
+        const pageCount = (await engine.info(engineId)).pageCount;
+        const pages = Array.from({ length: pageCount }, (_, i) => i);
+        if (op.kind === "images") {
+          const digits = String(pageCount).length;
+          const ext = op.format === "jpeg" ? "jpg" : "png";
+          const images = [];
+          for (const page of pages) {
+            const data = await engine.exportPageImage(engineId, page, op.dpi, op.format, 90);
+            images.push({ name: `${fileStem}-${String(page + 1).padStart(digits, "0")}.${ext}`, data });
+          }
+          await api().writeFiles(outDir, images);
+        } else {
+          let data: Uint8Array;
+          if (op.kind === "remove-security") {
+            data = await engine.removeSecurity(engineId);
+          } else if (op.kind === "compress") {
+            data = await engine.compress(engineId, op.level, {});
+          } else {
+            if (op.kind === "watermark") await engine.addWatermark(engineId, pages, op.options);
+            else await engine.addPageNumbers(engineId, pages, op.options);
+            data = await engine.save(engineId, {});
+          }
+          await api().writeFiles(outDir, [{ name: `${fileStem}.pdf`, data }]);
+        }
+        ok++;
+      } catch (error) {
+        failed++;
+        problems.push(`${name}：${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        if (engineId !== null) await engine.close(engineId).catch(() => {});
+      }
+    }
+  } finally {
+    setState({ progress: null });
+  }
+
+  const lines = [`完成 ${ok} 個檔案，已存到「${baseName(outDir)}」資料夾。`];
+  if (skipped) lines.push(`略過 ${skipped} 個（需要密碼）`);
+  if (failed) lines.push(`失敗 ${failed} 個`);
+  if (problems.length) lines.push("", ...problems.slice(0, 12));
+  if (problems.length > 12) lines.push(`…等共 ${problems.length} 項`);
+  await alertDialog("批次處理結果", lines.join("\n"));
 }
 
 /** 移除密碼與權限限制，另存沒有加密的版本（文件必須已能開啟）。 */

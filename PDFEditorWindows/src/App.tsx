@@ -6,17 +6,19 @@ import {
 } from "./state/actions";
 import { activeTab, setState, updateTab, useActiveTab, useStore } from "./state/store";
 import { StatusBar, TabBar, Toolbar, TOOL_KEYS, Welcome } from "./components/Chrome";
-import { hasOpenModal, ModalHost } from "./components/Modal";
+import { hasOpenModal, ModalHost, showModal } from "./components/Modal";
 import { Sidebar } from "./components/Sidebar";
 import { Viewer } from "./components/Viewer";
 import { openDialog } from "./components/dialogs/openDialog";
 import { openImageEditor } from "./components/dialogs/ImageEditorDialog";
+import { BatchDialog } from "./components/dialogs/BatchDialog";
 
 registerCommands({
   "export-images": () => openDialog("export-images"),
   password: () => openDialog("password"),
   compress: () => openDialog("compress"),
   "remove-security": () => removeSecurityDocument(),
+  batch: () => showModal<void>((done) => <BatchDialog done={done} />),
   split: () => openDialog("split"),
   watermark: () => openDialog("watermark"),
   "page-numbers": () => openDialog("page-numbers"),

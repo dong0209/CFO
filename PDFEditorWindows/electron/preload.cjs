@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld("api", {
   readFile: (path) => ipcRenderer.invoke("file:read", path),
   saveDialog: (title, defaultName, kind) => ipcRenderer.invoke("dialog:save", { title, defaultName, kind }),
   chooseFolder: (title) => ipcRenderer.invoke("dialog:folder", title),
+  listPdfs: (folder) => ipcRenderer.invoke("folder:list-pdfs", folder),
+  ensureFolder: (parent, name) => ipcRenderer.invoke("folder:ensure", parent, name),
   writeFile: (path, data) => ipcRenderer.invoke("file:write", path, data),
   writeFiles: (folder, files) => ipcRenderer.invoke("file:write-many", folder, files),
   showInFolder: (path) => ipcRenderer.invoke("shell:show", path),

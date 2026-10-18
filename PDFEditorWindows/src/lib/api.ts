@@ -30,6 +30,10 @@ export interface DesktopApi {
   readFile(path: string): Promise<LoadedFile>;
   saveDialog(title: string, defaultName: string, kind?: "pdf" | "text"): Promise<string | null>;
   chooseFolder(title: string): Promise<string | null>;
+  /** 列出資料夾中（僅該層）的 PDF 檔案完整路徑 */
+  listPdfs(folder: string): Promise<string[]>;
+  /** 在 parent 下建立子資料夾並回傳其路徑 */
+  ensureFolder(parent: string, name: string): Promise<string>;
   writeFile(path: string, data: Uint8Array | string): Promise<void>;
   writeFiles(folder: string, files: Array<{ name: string; data: Uint8Array }>): Promise<string[]>;
   showInFolder(path: string): Promise<void>;

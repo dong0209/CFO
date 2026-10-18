@@ -50,6 +50,8 @@ function buildMenu({ send, recent, openRecent }) {
         item("密碼保護…", "password"),
         item("移除密碼與限制…", "remove-security"),
         { type: "separator" },
+        item("批次處理…", "batch"),
+        { type: "separator" },
         item("列印…", "print", "CmdOrCtrl+P"),
         { type: "separator" },
         item("關閉分頁", "close-tab", "CmdOrCtrl+W"),
