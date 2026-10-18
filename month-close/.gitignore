@@ -1,0 +1,9 @@
+# 真實資料（資料庫、佐證檔）與示範資料一律不進版控
+data/
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+# 範本線上編輯產生的備份
+config/backup/
+backups/

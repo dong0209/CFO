@@ -1,0 +1,17 @@
+# Streamlit 設定（請勿刪除 gatherUsageStats 這行：關閉使用統計回傳）
+
+[browser]
+gatherUsageStats = false
+
+[server]
+# 本機使用只接受本機連線；搬到公司內網時改為 "0.0.0.0"（詳見 README）
+address = "127.0.0.1"
+port = 8501
+headless = true
+runOnSave = false
+fileWatcherType = "none"
+# 單一佐證檔上傳大小上限（MB）
+maxUploadSize = 50
+
+[client]
+toolbarMode = "minimal"

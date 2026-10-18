@@ -1,0 +1,6 @@
+# 執行所需套件（全部在本機執行，不連外部服務）
+streamlit>=1.40
+pyyaml>=6.0
+openpyxl>=3.1
+# Windows 沒有內建時區資料，搬到 Windows 電腦時需要
+tzdata; sys_platform == "win32"

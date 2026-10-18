@@ -1,0 +1,5 @@
+# 開發與測試用（日常使用不需要）
+-r requirements.txt
+pytest>=8
+# 瀏覽器端對端測試（tests/e2e_two_tabs.py）；安裝後需執行 playwright install chromium
+playwright>=1.40
