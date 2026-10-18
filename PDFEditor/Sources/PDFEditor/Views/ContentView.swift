@@ -44,6 +44,8 @@ struct ContentView: View {
                 SheetHost(sheet: sheet, document: document)
             } else if sheet == .signatures {
                 SignatureSheet()
+            } else if sheet == .batch {
+                BatchSheet()
             }
         }
     }
@@ -81,6 +83,8 @@ private struct SheetHost: View {
         case .signatures: SignatureSheet()
         case .password: PasswordSheet(document: document)
         case .compress: CompressSheet(document: document)
+        case .compare: CompareSheet()
+        case .batch: BatchSheet()
         case .split: SplitSheet(document: document)
         case .exportImages: ExportImagesSheet(document: document)
         case .ocr: OCRSheet(document: document)

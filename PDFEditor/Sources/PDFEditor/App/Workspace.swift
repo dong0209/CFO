@@ -5,7 +5,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum SheetKind: String, Identifiable {
-    case watermark, pageNumbers, signatures, password, compress, split, exportImages, ocr, textBox
+    case watermark, pageNumbers, signatures, password, compress, split, exportImages, ocr, textBox, compare, batch
     var id: String { rawValue }
 }
 
@@ -63,6 +63,20 @@ final class Workspace: ObservableObject {
     func showTextBox(_ request: TextBoxRequest) {
         textBoxRequest = request
         activeSheet = .textBox
+    }
+
+    /// 並排比較（需至少兩份開啟中的文件）。
+    func showCompare() {
+        guard documents.count >= 2 else {
+            Panels.showMessage(title: "需要兩份文件", message: "請先開啟兩份以上的文件再比較。")
+            return
+        }
+        activeSheet = .compare
+    }
+
+    /// 批次處理（不需開啟文件）。
+    func showBatch() {
+        activeSheet = .batch
     }
     @Published private(set) var recentURLs: [URL] = []
     @Published var showSidebar = true

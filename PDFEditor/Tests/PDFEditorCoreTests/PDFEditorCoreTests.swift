@@ -548,6 +548,7 @@ final class TextEditEngineTests: XCTestCase {
         XCTAssertFalse(doc.isEncrypted, "壓縮輸出預設不加密")
     }
 
+    @MainActor
     func testEncryptedDocumentNeedsPassword() async throws {
         guard PDFEngineBridge.engineDirectory != nil else {
             throw XCTSkip("尚未建置文字編輯引擎")

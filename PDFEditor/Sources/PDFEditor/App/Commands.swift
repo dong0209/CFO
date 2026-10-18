@@ -51,6 +51,8 @@ struct FileCommands: Commands {
                 .disabled(document == nil)
             Button("移除密碼與限制…") { document?.removeSecurity() }
                 .disabled(document == nil)
+            Divider()
+            Button("批次處理…") { workspace.showBatch() }
         }
 
         CommandGroup(replacing: .printItem) {
@@ -132,6 +134,9 @@ struct ViewCommands: Commands {
             if let document {
                 Menu("頁面顯示方式") { DisplayModeMenu(document: document) }
             }
+            Divider()
+            Button("並排比較兩份文件…") { workspace.showCompare() }
+                .disabled(workspace.documents.count < 2)
             Divider()
             Button("上一頁") { document?.pdfView?.goToPreviousPage(nil) }
                 .keyboardShortcut(.upArrow, modifiers: [.command, .option])
