@@ -44,7 +44,12 @@ struct FileCommands: Commands {
                 Button("匯出壓縮版本…") { document?.exportCompressed() }
             }
             .disabled(document == nil)
+            Button("壓縮檔案大小…") { workspace.activeSheet = .compress }
+                .disabled(document == nil)
+            Divider()
             Button("密碼保護…") { workspace.activeSheet = .password }
+                .disabled(document == nil)
+            Button("移除密碼與限制…") { document?.removeSecurity() }
                 .disabled(document == nil)
         }
 

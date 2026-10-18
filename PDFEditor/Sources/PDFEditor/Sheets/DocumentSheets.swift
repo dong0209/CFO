@@ -221,6 +221,38 @@ struct PasswordSheet: View {
     }
 }
 
+// MARK: - 壓縮
+
+struct CompressSheet: View {
+    @ObservedObject var document: EditorDocument
+    @State private var level = "medium"
+
+    private static let options: [(id: String, label: String, hint: String)] = [
+        ("low", "低（畫質優先）", "影像維持較高解析度，檔案略為縮小"),
+        ("medium", "中（平衡）", "影像降到約 150dpi，畫質與大小平衡"),
+        ("high", "高（檔案最小）", "影像降到約 100dpi，適合純螢幕檢視或電子郵件"),
+    ]
+
+    var body: some View {
+        SheetContainer(title: "壓縮檔案大小", confirmTitle: "壓縮並另存…", canConfirm: true) {
+            document.compressDocument(level: level)
+        } content: {
+            Picker("壓縮強度", selection: $level) {
+                ForEach(Self.options, id: \.id) { option in
+                    Text(option.label).tag(option.id)
+                }
+            }
+            .pickerStyle(.radioGroup)
+            if let hint = Self.options.first(where: { $0.id == level })?.hint {
+                Text(hint).font(.caption).foregroundStyle(.secondary)
+            }
+            Text("壓縮會把頁面上較大的影像降低解析度並重新壓縮；文字與向量內容不受影響。掃描檔或含大量照片的檔案效果最明顯。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
 // MARK: - 分割
 
 struct SplitSheet: View {

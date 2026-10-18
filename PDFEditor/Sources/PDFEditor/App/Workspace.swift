@@ -5,7 +5,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum SheetKind: String, Identifiable {
-    case watermark, pageNumbers, signatures, password, split, exportImages, ocr, textBox
+    case watermark, pageNumbers, signatures, password, compress, split, exportImages, ocr, textBox
     var id: String { rawValue }
 }
 

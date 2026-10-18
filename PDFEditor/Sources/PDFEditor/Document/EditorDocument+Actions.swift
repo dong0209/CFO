@@ -98,6 +98,46 @@ extension EditorDocument {
         }
     }
 
+    /// 以指定強度（low／medium／high）壓縮並另存；透過 MuPDF 引擎把較大的影像降採樣。
+    func compressDocument(level: String) {
+        bakeCustomAnnotations()
+        guard let data = pdf.dataRepresentation() else { return }
+        guard let url = Panels.save(title: "壓縮檔案大小", suggestedName: "\(baseName)-壓縮.pdf") else { return }
+        let password = security?.userPassword
+        let before = data.count
+        Task { @MainActor in
+            let workspace = Workspace.shared
+            workspace.beginProgress("正在壓縮…", total: 1)
+            defer { workspace.endProgress() }
+            do {
+                let out = try await PDFEngineBridge.shared.compress(in: data, password: password, level: level)
+                try out.write(to: url, options: .atomic)
+                Workspace.shared.noteRecent(url)
+                let formatter = ByteCountFormatter()
+                let saved = before > 0 ? Int((1 - Double(out.count) / Double(before)) * 100) : 0
+                Panels.showMessage(
+                    title: "壓縮完成",
+                    message: "已儲存至「\(url.lastPathComponent)」。\n壓縮前約 \(formatter.string(fromByteCount: Int64(before)))，壓縮後 \(formatter.string(fromByteCount: Int64(out.count)))（縮小約 \(max(0, saved))%）"
+                )
+            } catch {
+                Panels.showError(error, title: "壓縮失敗")
+            }
+        }
+    }
+
+    /// 移除密碼與權限限制，另存沒有加密的版本（文件必須已能開啟）。
+    func removeSecurity() {
+        bakeCustomAnnotations()
+        guard let url = Panels.save(title: "移除密碼與限制", suggestedName: "\(baseName)-無密碼.pdf") else { return }
+        do {
+            try ExportService.write(pdf, to: url, security: nil)
+            Workspace.shared.noteRecent(url)
+            Panels.showMessage(title: "已移除密碼與限制", message: "已另存沒有密碼、沒有權限限制的版本至「\(url.lastPathComponent)」。")
+        } catch {
+            Panels.showError(error, title: "無法移除密碼")
+        }
+    }
+
     /// 文字辨識：逐頁點陣化後以 Vision 辨識，再以含隱形文字層的新頁面取代。
     func runOCR(language: OCRService.Language, onlyPagesWithoutText: Bool) {
         let targets = pages.filter { !onlyPagesWithoutText || !OCRService.hasText($0) }

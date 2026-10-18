@@ -290,6 +290,16 @@ public final class PDFEngineBridge: NSObject {
         return data
     }
 
+    /// 壓縮檔案大小：以 MuPDF 引擎把較大的影像降採樣並重新壓縮（level 為 low／medium／high）。
+    public func compress(in data: Data, password: String?, level: String) async throws -> Data {
+        try await withDocument(data, password: password) { id in
+            guard let out = try await self.call("compress", [id, level, [String: Any]()]) as? Data else {
+                throw PDFEngineError.invalidResponse("compress")
+            }
+            return out
+        }
+    }
+
     /// 一次完成：讀取點選位置的文字行。
     public func textLine(in data: Data, password: String?, page: Int, at point: CGPoint) async throws -> EditableTextLine? {
         try await withDocument(data, password: password) { id in

@@ -80,6 +80,7 @@ private struct SheetHost: View {
         case .pageNumbers: PageNumberSheet(document: document)
         case .signatures: SignatureSheet()
         case .password: PasswordSheet(document: document)
+        case .compress: CompressSheet(document: document)
         case .split: SplitSheet(document: document)
         case .exportImages: ExportImagesSheet(document: document)
         case .ocr: OCRSheet(document: document)

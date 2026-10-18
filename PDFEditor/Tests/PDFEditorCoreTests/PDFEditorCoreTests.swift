@@ -535,6 +535,19 @@ final class TextEditEngineTests: XCTestCase {
     }
 
     @MainActor
+    func testCompressThroughEngineKeepsPagesAndText() async throws {
+        guard PDFEngineBridge.engineDirectory != nil else {
+            throw XCTSkip("尚未建置文字編輯引擎")
+        }
+        _ = NSApplication.shared
+        let data = try XCTUnwrap(makeDocument(pages: 2).dataRepresentation())
+        let out = try await PDFEngineBridge.shared.compress(in: data, password: nil, level: "high")
+        let doc = try XCTUnwrap(PDFDocument(data: out))
+        XCTAssertEqual(doc.pageCount, 2)
+        XCTAssertTrue((doc.page(at: 0)?.string ?? "").contains("Page 1"))
+        XCTAssertFalse(doc.isEncrypted, "壓縮輸出預設不加密")
+    }
+
     func testEncryptedDocumentNeedsPassword() async throws {
         guard PDFEngineBridge.engineDirectory != nil else {
             throw XCTSkip("尚未建置文字編輯引擎")
