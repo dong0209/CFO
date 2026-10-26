@@ -83,6 +83,7 @@ private struct SheetHost: View {
         case .signatures: SignatureSheet()
         case .password: PasswordSheet(document: document)
         case .compress: CompressSheet(document: document)
+        case .metadata: MetadataSheet(document: document)
         case .compare: CompareSheet()
         case .batch: BatchSheet()
         case .split: SplitSheet(document: document)

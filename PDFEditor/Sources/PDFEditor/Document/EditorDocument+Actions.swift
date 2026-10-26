@@ -178,4 +178,86 @@ extension EditorDocument {
             )
         }
     }
+
+    // MARK: - 擷取圖片與移除空白頁
+
+    /// 擷取頁面中的圖片（PNG），存到選擇的資料夾。
+    func extractImages() {
+        bakeCustomAnnotations()
+        guard let data = pdf.dataRepresentation() else { return }
+        let password = security?.userPassword
+        Task { @MainActor in
+            let workspace = Workspace.shared
+            workspace.beginProgress("正在擷取圖片…", total: 1)
+            let images: [Data]
+            do {
+                images = try await PDFEngineBridge.shared.extractImages(in: data, password: password)
+            } catch {
+                workspace.endProgress()
+                Panels.showError(error, title: "擷取圖片失敗")
+                return
+            }
+            workspace.endProgress()
+            guard !images.isEmpty else {
+                Panels.showMessage(title: "沒有可擷取的圖片", message: "這份文件的頁面中找不到內嵌圖片。")
+                return
+            }
+            guard let folder = Panels.chooseFolder(title: "選擇要存放圖片的資料夾") else { return }
+            let digits = String(images.count).count
+            do {
+                for (index, image) in images.enumerated() {
+                    let name = String(format: "%0\(digits)d", index + 1)
+                    try image.write(to: folder.appendingPathComponent("\(baseName)-圖片\(name).png"))
+                }
+                Panels.showMessage(title: "已擷取圖片", message: "已擷取 \(images.count) 張圖片到「\(folder.lastPathComponent)」。")
+            } catch {
+                Panels.showError(error, title: "儲存圖片失敗")
+            }
+        }
+    }
+
+    /// 偵測並移除空白頁（看起來幾乎全白、且沒有註解的頁面）；不會移除唯一一頁。
+    func removeBlankPages() {
+        var blanks: [Int] = []
+        for index in 0..<pdf.pageCount {
+            guard let page = pdf.page(at: index) else { continue }
+            if page.annotations.isEmpty, Self.isBlankPage(page) { blanks.append(index) }
+        }
+        if blanks.count >= pdf.pageCount { blanks.removeLast() }
+        guard !blanks.isEmpty else {
+            Panels.showMessage(title: "沒有空白頁", message: "找不到可移除的空白頁（含註解的頁面不算空白）。")
+            return
+        }
+        let count = blanks.count
+        deletePages(blanks)
+        Panels.showMessage(title: "已移除空白頁", message: "已移除 \(count) 個空白頁。")
+    }
+
+    /// 頁面是否幾乎全白（低解析度渲染後，深色像素比例極低）。
+    private static func isBlankPage(_ page: PDFPage) -> Bool {
+        guard let image = PageRenderer.image(for: page, dpi: 18) else { return false }
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0 else { return false }
+        var pixels = [UInt8](repeating: 0, count: width * height)
+        guard let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return false }
+        context.setFillColor(gray: 1, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var dark = 0
+        for value in pixels where value < 240 { dark += 1 }
+        return Double(dark) / Double(width * height) < 0.001
+    }
+
+    /// 設定文件中繼資料（標題、作者、主旨、關鍵字）。
+    func setMetadata(title: String, author: String, subject: String, keywords: String) {
+        var attributes = pdf.documentAttributes ?? [:]
+        attributes[PDFDocumentAttribute.titleAttribute] = title
+        attributes[PDFDocumentAttribute.authorAttribute] = author
+        attributes[PDFDocumentAttribute.subjectAttribute] = subject
+        let list = keywords.split(whereSeparator: { $0 == "," || $0 == "，" }).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        attributes[PDFDocumentAttribute.keywordsAttribute] = list
+        pdf.documentAttributes = attributes
+        markChanged()
+    }
 }

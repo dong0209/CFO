@@ -300,6 +300,14 @@ public final class PDFEngineBridge: NSObject {
         }
     }
 
+    /// 擷取頁面中的圖片（解碼為 PNG）。
+    public func extractImages(in data: Data, password: String?) async throws -> [Data] {
+        try await withDocument(data, password: password) { id in
+            let result = try await self.call("extractImages", [id]) as? [[String: Any]] ?? []
+            return result.compactMap { $0["data"] as? Data }
+        }
+    }
+
     /// 一次完成：讀取點選位置的文字行。
     public func textLine(in data: Data, password: String?, page: Int, at point: CGPoint) async throws -> EditableTextLine? {
         try await withDocument(data, password: password) { id in

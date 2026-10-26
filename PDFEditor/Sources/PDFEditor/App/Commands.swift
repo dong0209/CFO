@@ -46,6 +46,10 @@ struct FileCommands: Commands {
             .disabled(document == nil)
             Button("壓縮檔案大小…") { workspace.activeSheet = .compress }
                 .disabled(document == nil)
+            Button("文件內容（中繼資料）…") { workspace.activeSheet = .metadata }
+                .disabled(document == nil)
+            Button("擷取頁面中的圖片…") { document?.extractImages() }
+                .disabled(document == nil)
             Divider()
             Button("密碼保護…") { workspace.activeSheet = .password }
                 .disabled(document == nil)
@@ -213,6 +217,7 @@ struct ToolCommands: Commands {
             Group {
                 Button("套用遮蓋（永久移除內容）") { document?.applyRedactions() }
                 Button("文字辨識（OCR）…") { workspace.activeSheet = .ocr }
+                Button("移除空白頁") { document?.removeBlankPages() }
                 Button("平面化所有註解與表單") { document?.flattenAll() }
             }
             .disabled(document == nil)

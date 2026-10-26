@@ -253,6 +253,44 @@ struct CompressSheet: View {
     }
 }
 
+// MARK: - 文件內容（中繼資料）
+
+struct MetadataSheet: View {
+    @ObservedObject var document: EditorDocument
+    @State private var title: String
+    @State private var author: String
+    @State private var subject: String
+    @State private var keywords: String
+
+    init(document: EditorDocument) {
+        self.document = document
+        let attributes = document.pdf.documentAttributes ?? [:]
+        func value(_ key: PDFDocumentAttribute) -> String {
+            if let string = attributes[key] as? String { return string }
+            if let list = attributes[key] as? [String] { return list.joined(separator: ", ") }
+            return ""
+        }
+        _title = State(initialValue: value(.titleAttribute))
+        _author = State(initialValue: value(.authorAttribute))
+        _subject = State(initialValue: value(.subjectAttribute))
+        _keywords = State(initialValue: value(.keywordsAttribute))
+    }
+
+    var body: some View {
+        SheetContainer(title: "文件內容", confirmTitle: "套用", canConfirm: true) {
+            document.setMetadata(title: title, author: author, subject: subject, keywords: keywords)
+        } content: {
+            TextField("標題", text: $title)
+            TextField("作者", text: $author)
+            TextField("主旨", text: $subject)
+            TextField("關鍵字（以逗號分隔）", text: $keywords)
+            Text("變更會在下次儲存時寫入檔案。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
 // MARK: - 分割
 
 struct SplitSheet: View {

@@ -549,6 +549,31 @@ final class TextEditEngineTests: XCTestCase {
     }
 
     @MainActor
+    func testExtractImagesThroughEngine() async throws {
+        guard PDFEngineBridge.engineDirectory != nil else {
+            throw XCTSkip("尚未建置文字編輯引擎")
+        }
+        _ = NSApplication.shared
+        // 建立一份含有一張紅色圖片的 PDF
+        let pdfData = NSMutableData()
+        var box = CGRect(x: 0, y: 0, width: 300, height: 300)
+        let consumer = try XCTUnwrap(CGDataConsumer(data: pdfData as CFMutableData))
+        let ctx = try XCTUnwrap(CGContext(consumer: consumer, mediaBox: &box, nil))
+        ctx.beginPDFPage(nil)
+        let imgCtx = try XCTUnwrap(CGContext(data: nil, width: 120, height: 120, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        imgCtx.setFillColor(red: 1, green: 0, blue: 0, alpha: 1)
+        imgCtx.fill(CGRect(x: 0, y: 0, width: 120, height: 120))
+        let image = try XCTUnwrap(imgCtx.makeImage())
+        ctx.draw(image, in: CGRect(x: 40, y: 40, width: 200, height: 200))
+        ctx.endPDFPage()
+        ctx.closePDF()
+
+        let images = try await PDFEngineBridge.shared.extractImages(in: pdfData as Data, password: nil)
+        XCTAssertGreaterThanOrEqual(images.count, 1, "應擷取到至少一張圖片")
+        XCTAssertNotNil(NSImage(data: try XCTUnwrap(images.first)), "擷取出的資料應為可讀取的圖片")
+    }
+
+    @MainActor
     func testEncryptedDocumentNeedsPassword() async throws {
         guard PDFEngineBridge.engineDirectory != nil else {
             throw XCTSkip("尚未建置文字編輯引擎")
