@@ -6,3 +6,4 @@ build/icon.png
 e2e/screenshots/
 *.log
 dist-mac-engine/
+release-download/
