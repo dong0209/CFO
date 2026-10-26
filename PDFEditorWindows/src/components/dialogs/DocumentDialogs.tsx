@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PAGE_NUMBER_PRESETS, indicesFromRanges, parsePageRanges, renderPageNumber } from "../../engine/pageRanges";
-import type { CompressLevel, ImageFormat, StampPosition } from "../../engine/types";
+import type { CompressLevel, DocMetadata, ImageFormat, StampPosition } from "../../engine/types";
 import { engine } from "../../lib/engine";
 import { lastOcrLanguage, type OcrLanguage, OCR_LANGUAGES, runOcr } from "../../lib/ocr";
 import { compressDocument, exportImages, mutate, splitDocument, targetPages } from "../../state/actions";
@@ -422,6 +422,62 @@ export function AboutDialog({ done }: { done: Done }) {
       </p>
       <p className="muted">所有處理都在本機完成，不會上傳任何檔案。</p>
       <p className="hint">使用 MuPDF（AGPL-3.0）處理 PDF、Tesseract（Apache-2.0）進行文字辨識、Electron 與 React 建構介面。</p>
+    </Dialog>
+  );
+}
+
+// MARK: - 文件內容（中繼資料）
+
+const METADATA_FIELDS: Array<{ key: keyof DocMetadata; label: string }> = [
+  { key: "title", label: "標題" },
+  { key: "author", label: "作者" },
+  { key: "subject", label: "主旨" },
+  { key: "keywords", label: "關鍵字（以逗號分隔）" },
+];
+
+export function MetadataDialog({ tab, done }: { tab: DocTab; done: Done }) {
+  const [fields, setFields] = useState<DocMetadata | null>(null);
+  const [producer, setProducer] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    engine.metadata(tab.engineId).then((m) => {
+      if (cancelled) return;
+      setFields(m);
+      setProducer(m.producer || m.creator || "");
+    });
+    return () => { cancelled = true; };
+  }, [tab.engineId]);
+
+  return (
+    <Dialog
+      title="文件內容"
+      onCancel={() => done()}
+      confirmText="套用"
+      confirmDisabled={!fields}
+      onConfirm={() => {
+        if (fields) {
+          const { title, author, subject, keywords } = fields;
+          mutate("無法更新文件內容", (t) => engine.setMetadata(t.engineId, { title, author, subject, keywords }));
+          updateTab(tab.key, { dirty: true });
+        }
+        done();
+      }}
+    >
+      {fields ? (
+        <>
+          {METADATA_FIELDS.map(({ key, label }) => (
+            <label key={key} className="field">
+              <span>{label}</span>
+              <input value={fields[key]} onChange={(e) => setFields({ ...fields, [key]: e.target.value })} />
+            </label>
+          ))}
+          {producer && <p className="hint">製作軟體：{producer}</p>}
+          <p className="hint">變更會在下次儲存時寫入檔案。</p>
+        </>
+      ) : (
+        <p className="hint">讀取中…</p>
+      )}
     </Dialog>
   );
 }

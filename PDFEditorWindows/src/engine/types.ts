@@ -139,6 +139,26 @@ export interface SaveOptions {
 /** 壓縮強度：低（畫質優先）、中（平衡）、高（檔案最小） */
 export type CompressLevel = "low" | "medium" | "high";
 
+/** 文件中繼資料 */
+export interface DocMetadata {
+  title: string;
+  author: string;
+  subject: string;
+  keywords: string;
+  creator: string;
+  producer: string;
+}
+
+/** 從頁面擷取出的圖片 */
+export interface ExtractedImage {
+  page: number;
+  index: number;
+  format: "png" | "jpeg";
+  data: Uint8Array;
+  width: number;
+  height: number;
+}
+
 export type ImageFormat = "png" | "jpeg";
 
 /** 可直接編輯的文字行 */

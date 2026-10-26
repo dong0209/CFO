@@ -316,6 +316,53 @@ describe("搜尋、書籤、表單與存檔", () => {
   });
 });
 
+describe("中繼資料、擷取圖片、移除空白頁", () => {
+  let engine: PdfEngine;
+  beforeEach(() => { engine = new PdfEngine(); });
+
+  it("讀取、設定中繼資料並可復原、存檔後保留", () => {
+    const { id } = engine.open(makePdf(1));
+    engine.setMetadata(id, { title: "報告 2026", author: "王小明", subject: "季度", keywords: "財務,PDF" });
+    expect(engine.metadata(id).title).toBe("報告 2026");
+    expect(engine.metadata(id).author).toBe("王小明");
+    const reopened = engine.open(engine.save(id)).id;
+    expect(engine.metadata(reopened).keywords).toBe("財務,PDF");
+    engine.undo(id);
+    expect(engine.metadata(id).title).toBe("");
+  });
+
+  it("擷取頁面中的圖片（PNG）", () => {
+    const { id } = engine.open(photoPdf(300));
+    const images = engine.extractImages(id);
+    expect(images).toHaveLength(1);
+    expect(images[0].width).toBe(300);
+    expect(Array.from(images[0].data.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+  });
+
+  it("移除空白頁（保留有內容或有註解的頁面），可復原", () => {
+    const doc = new mupdf.PDFDocument();
+    const font = doc.addSimpleFont(new mupdf.Font("Helvetica"));
+    doc.insertPage(-1, doc.addPage([0, 0, 595, 842], 0, {}, ""));
+    doc.insertPage(-1, doc.addPage([0, 0, 595, 842], 0, { Font: { F1: font } }, "BT /F1 20 Tf 72 700 Td (Keep) Tj ET"));
+    doc.insertPage(-1, doc.addPage([0, 0, 595, 842], 0, {}, ""));
+    const { id } = engine.open(doc.saveToBuffer("").asUint8Array().slice());
+    expect(engine.removeBlankPages(id)).toBe(2);
+    expect(engine.info(id).pageCount).toBe(1);
+    expect(engine.pageText(id, 0).trim()).toBe("Keep");
+    engine.undo(id);
+    expect(engine.info(id).pageCount).toBe(3);
+  });
+
+  it("只有註解的頁面不算空白，也不會移除唯一一頁", () => {
+    const doc = new mupdf.PDFDocument();
+    doc.insertPage(-1, doc.addPage([0, 0, 595, 842], 0, {}, ""));
+    const { id } = engine.open(doc.saveToBuffer("").asUint8Array().slice());
+    engine.addNote(id, 0, [100, 100], "重要", [1, 1, 0]);
+    expect(engine.removeBlankPages(id)).toBe(0);
+    expect(engine.info(id).pageCount).toBe(1);
+  });
+});
+
 describe("直接編輯文字", () => {
   const pixel = (engine: PdfEngine, id: number, x: number, y: number) => {
     const { pixels, width } = engine.render(id, 0, 1);

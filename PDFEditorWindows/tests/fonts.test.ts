@@ -128,6 +128,18 @@ describe("編輯文字時的字型", () => {
     expect(saved.length).toBeLessThan(200_000);
   });
 
+  it("中文以備援字型寫入時，文字層使用標準字碼（可搜尋，不是相容表意字）", () => {
+    const { id } = engine.open(makePdf(1));
+    engine.addFreeText(id, 0, [100, 400], "年度報告 2026", { fontSize: 18, color: [0, 0, 0], bold: false, italic: false });
+    engine.flatten(id);
+    const saved = engine.save(id);
+    const text = mupdf.Document.openDocument(saved, "application/pdf").loadPage(0).toStructuredText("").asText();
+    const codes = [...text].map((c) => c.codePointAt(0) ?? 0);
+    expect(codes.includes(0x5e74), "年 應為標準碼 U+5E74").toBe(true);
+    expect(codes.includes(0xf98e), "不應出現相容表意字 U+F98E").toBe(false);
+    expect(engine.search(engine.open(saved).id, "年度報告").length).toBeGreaterThan(0);
+  });
+
   it("原檔內嵌字型包含所需字形時直接沿用", () => {
     const { id } = engine.open(makeEmbeddedFontPdf("原始文字測試"));
     const [line] = engine.textLines(id, 0);

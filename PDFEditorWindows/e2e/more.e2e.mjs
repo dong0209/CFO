@@ -267,6 +267,32 @@ try {
   await page.keyboard.press("Escape");
   await page.waitForSelector(".compare", { state: "detached", timeout: 5000 });
 
+  step("文件內容（中繼資料）：設定標題、作者並存檔");
+  await waitTabName("Beta.pdf");
+  await menu("metadata");
+  await page.locator(".dialog").waitFor();
+  await page.waitForFunction(() => !document.querySelector(".dialog")?.textContent?.includes("讀取中"), null, { timeout: 5000 });
+  await page.locator(".dialog .field input").nth(0).fill("測試標題 Meta");
+  await page.locator(".dialog .field input").nth(1).fill("作者小明");
+  await page.locator(".dialog .primary", { hasText: "套用" }).click();
+  await page.waitForTimeout(200);
+  const metaOut = join(work, "Beta 中繼資料.pdf");
+  await saveAs(metaOut);
+  {
+    const doc = mupdf.Document.openDocument(readFileSync(metaOut), "application/pdf");
+    assert.equal(doc.getMetaData("info:Title"), "測試標題 Meta", "標題應寫入");
+    assert.equal(doc.getMetaData("info:Author"), "作者小明", "作者應寫入");
+  }
+
+  step("移除空白頁");
+  await page.locator(".sidebar-tabs button", { hasText: "縮圖" }).click();
+  await page.waitForTimeout(200);
+  const beforePages = await page.locator(".thumb").count();
+  await menu("insert-blank");
+  await page.waitForFunction((n) => document.querySelectorAll(".thumb").length === n + 1, beforePages, { timeout: 5000 });
+  await menu("remove-blank-pages");
+  await page.waitForFunction((n) => document.querySelectorAll(".thumb").length === n, beforePages, { timeout: 5000 });
+
   step("合併多個 PDF");
   await mockOpen([alpha, beta]);
   await menu("merge");

@@ -4,7 +4,7 @@ import { cleanFontName, type FontRequest, fontRequestFor, isReliableText, ocrFon
 import { chunk, moveItems, renderPageNumber } from "./pageRanges";
 import type {
   AnnotInfo, DocInfo, ImageFormat, LinkInfo, MarkupKind, Matrix, OcrLine, OpenResult, OutlineNode,
-  CompressLevel, PageInfo, PageNumberOptions, Point, Quad, Rect, RenderResult, RGB, SaveOptions, SearchHit, ShapeKind,
+  CompressLevel, DocMetadata, ExtractedImage, PageInfo, PageNumberOptions, Point, Quad, Rect, RenderResult, RGB, SaveOptions, SearchHit, ShapeKind,
   EditorPageImage, FontData, ImageEditObject, ImageEditResult,
   TextBoxStyle, TextLine, TextSelection, WatermarkOptions, WidgetInfo, WidgetKind,
 } from "./types";
@@ -357,14 +357,9 @@ export class PdfEngine {
     annot.update();
 
     const fonts = doc.newDictionary();
-    const used = new Map<mupdf.Font, Set<number>>();
-    for (const run of lines.flat()) {
-      const set = used.get(run.font) ?? new Set<number>();
-      run.gids.forEach((g) => set.add(g));
-      used.set(run.font, set);
-    }
+    const used = this.collectGlyphs(lines.flat());
     const names = new Map<mupdf.Font, string>();
-    for (const [f, gids] of used) names.set(f, this.embedFont(doc, fonts, f, gids));
+    for (const [f, gidChars] of used) names.set(f, this.embedFont(doc, fonts, f, gidChars));
     const ops = [`${style.color.map(fmt).join(" ")} rg BT`];
     lines.forEach((runs, i) => {
       ops.push(`1 0 0 1 ${fmt(pad)} ${fmt(height - pad - size * 0.9 - i * lineHeight)} Tm`);
@@ -745,10 +740,25 @@ export class PdfEngine {
    * 將字型嵌入文件（只保留用到的字形），回傳資源名稱。
    * 嵌入真正的字型後，任何閱讀器都能正確顯示，不會因缺字型而出現亂碼。
    */
-  private embedFont(doc: mupdf.PDFDocument, fonts: mupdf.PDFObject, font: mupdf.Font, gids: Set<number>): string {
+  /** 從字形執行結果收集每個字型用到的字形與其對應字元（供嵌入與 ToUnicode 使用）。 */
+  private collectGlyphs(runs: GlyphRun[]): Map<mupdf.Font, Map<number, string>> {
+    const used = new Map<mupdf.Font, Map<number, string>>();
+    for (const run of runs) {
+      const map = used.get(run.font) ?? new Map<number, string>();
+      const chars = [...run.text];
+      run.gids.forEach((gid, i) => {
+        if (!map.has(gid)) map.set(gid, chars[i] ?? "");
+      });
+      used.set(run.font, map);
+    }
+    return used;
+  }
+
+  private embedFont(doc: mupdf.PDFDocument, fonts: mupdf.PDFObject, font: mupdf.Font, gidChars: Map<number, string>): string {
+    const gids = [...gidChars.keys()];
     const temp = new mupdf.PDFDocument();
     const ref = temp.addFont(font);
-    const hex = [...gids].map((g) => g.toString(16).padStart(4, "0")).join("");
+    const hex = gids.map((g) => g.toString(16).padStart(4, "0")).join("");
     temp.insertPage(0, temp.addPage([0, 0, 100, 100], 0, { Font: { F: ref } }, `BT /F 1 Tf <${hex}> Tj ET`));
     try {
       temp.subsetFonts();
@@ -756,6 +766,9 @@ export class PdfEngine {
       // 無法子集化的字型直接完整嵌入
     }
     const grafted = doc.graftObject(ref);
+    // 以實際輸入的字元覆寫 ToUnicode，避免 MuPDF 反查字型 cmap 時挑到相容表意字（例如 年 變成 U+F98E），導致搜尋不到
+    const cmap = toUnicodeCMap(gidChars);
+    if (cmap) grafted.put("ToUnicode", doc.addStream(cmap, {}));
     const name = `PEE${grafted.asIndirect()}`;
     fonts.put(name, grafted);
     return name;
@@ -773,21 +786,14 @@ export class PdfEngine {
     chain: mupdf.Font[] = this.fontChain(),
   ) {
     const shaped = runs.map((run) => ({ matrix: run.matrix, glyphs: this.glyphRuns(run.text, chain) }));
-    const used = new Map<mupdf.Font, Set<number>>();
-    for (const run of shaped) {
-      for (const glyph of run.glyphs) {
-        const set = used.get(glyph.font) ?? new Set<number>();
-        glyph.gids.forEach((g) => set.add(g));
-        used.set(glyph.font, set);
-      }
-    }
+    const used = this.collectGlyphs(shaped.flatMap((run) => run.glyphs));
     if (used.size === 0) return;
 
     const pageObj = page.getObject();
     const resources = ensureDict(doc, pageObj, "Resources", true);
     const fonts = ensureDict(doc, resources, "Font");
     const names = new Map<mupdf.Font, string>();
-    for (const [font, gids] of used) names.set(font, this.embedFont(doc, fonts, font, gids));
+    for (const [font, gidChars] of used) names.set(font, this.embedFont(doc, fonts, font, gidChars));
     const states = ensureDict(doc, resources, "ExtGState");
     const gsName = `PEGS${Math.round(opacity * 100)}`;
     if (states.get(gsName).isNull()) states.put(gsName, { Type: doc.newName("ExtGState"), ca: opacity, CA: opacity });
@@ -1520,6 +1526,108 @@ export class PdfEngine {
     return copy;
   }
 
+  // MARK: - 中繼資料、擷取圖片、移除空白頁
+
+  /** 讀取文件的中繼資料（標題、作者、主旨、關鍵字、製作軟體）。 */
+  metadata(id: number): DocMetadata {
+    const doc = this.doc(id);
+    const get = (key: string) => safe(() => doc.getMetaData(key) ?? "", "");
+    return {
+      title: get("info:Title"),
+      author: get("info:Author"),
+      subject: get("info:Subject"),
+      keywords: get("info:Keywords"),
+      creator: get("info:Creator"),
+      producer: get("info:Producer"),
+    };
+  }
+
+  /** 設定文件的中繼資料（只更新提供的欄位，可復原）。 */
+  setMetadata(id: number, fields: Partial<DocMetadata>): void {
+    const map: Record<keyof DocMetadata, string> = {
+      title: "info:Title",
+      author: "info:Author",
+      subject: "info:Subject",
+      keywords: "info:Keywords",
+      creator: "info:Creator",
+      producer: "info:Producer",
+    };
+    this.op(id, "編輯中繼資料", (doc) => {
+      for (const [field, value] of Object.entries(fields) as [keyof DocMetadata, string | undefined][]) {
+        if (value === undefined) continue;
+        doc.setMetaData(map[field], value);
+      }
+    });
+  }
+
+  /** 擷取頁面中的圖片（解碼後以 PNG 或 JPEG 回傳）；相同的圖片只回傳一次。 */
+  extractImages(id: number): ExtractedImage[] {
+    const doc = this.doc(id);
+    const results: ExtractedImage[] = [];
+    const seen = new Set<string>();
+    for (let page = 0; page < doc.countPages(); page++) {
+      const { images } = scanPage(this.load(doc, page), true);
+      for (const { image } of images) {
+        let pixmap: mupdf.Pixmap | null = null;
+        try {
+          pixmap = image.toPixmap();
+          // 一律以 PNG（無損）輸出，含透明與 CMYK 都能正確保留
+          const data = pixmap.asPNG().slice();
+          const key = `${image.getWidth()}x${image.getHeight()}:${data.length}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          results.push({ page, index: results.length, format: "png", data, width: image.getWidth(), height: image.getHeight() });
+        } catch {
+          // 無法解碼的影像略過
+        } finally {
+          pixmap?.destroy();
+        }
+      }
+    }
+    return results;
+  }
+
+  /** 偵測並移除空白頁（看起來幾乎全白、且沒有註解或表單欄位）；回傳移除的頁數。可復原。 */
+  removeBlankPages(id: number): number {
+    const doc = this.doc(id);
+    const blanks: number[] = [];
+    for (let i = 0; i < doc.countPages(); i++) {
+      if (this.isBlankPage(id, i)) blanks.push(i);
+    }
+    // 不能移除全部頁面
+    if (blanks.length >= doc.countPages()) blanks.pop();
+    if (!blanks.length) return 0;
+    const remove = new Set(blanks);
+    this.op(id, "移除空白頁", () => {
+      [...remove].sort((a, b) => b - a).forEach((i) => doc.deletePage(i));
+    });
+    return blanks.length;
+  }
+
+  /** 頁面是否幾乎全白且沒有註解／表單欄位。 */
+  private isBlankPage(id: number, pageIndex: number): boolean {
+    const page = this.load(this.doc(id), pageIndex);
+    if (page.getAnnotations().length > 0 || page.getWidgets().length > 0) return false;
+    const pixmap = page.toPixmap(mupdf.Matrix.scale(0.25, 0.25), mupdf.ColorSpace.DeviceGray, false, true);
+    try {
+      const pixels = pixmap.getPixels();
+      const stride = pixmap.getStride();
+      const width = pixmap.getWidth();
+      const height = pixmap.getHeight();
+      let dark = 0;
+      let total = 0;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          total++;
+          if (pixels[y * stride + x] < 240) dark++;
+        }
+      }
+      return total === 0 || dark / total < 0.001;
+    } finally {
+      pixmap.destroy();
+    }
+  }
+
   exportText(id: number): string {
     const doc = this.doc(id);
     const parts: string[] = [];
@@ -2037,6 +2145,44 @@ function hexToString(hex: string): string {
 }
 
 /** 解析 ToUnicode CMap（bfchar／bfrange），回傳 字碼（十六進位，大寫）→ 字元。 */
+/** 以字形碼（2 bytes）對應到實際字元，產生 ToUnicode CMap；沒有可對應的字元時回傳空字串。 */
+function toUnicodeCMap(gidChars: Map<number, string>): string {
+  const entries: string[] = [];
+  for (const [gid, ch] of gidChars) {
+    if (!ch) continue;
+    const utf16 = [...ch].flatMap((c) => {
+      const code = c.codePointAt(0) ?? 0;
+      if (code > 0xffff) {
+        const v = code - 0x10000;
+        return [0xd800 + (v >> 10), 0xdc00 + (v & 0x3ff)];
+      }
+      return [code];
+    });
+    entries.push(`<${gid.toString(16).padStart(4, "0")}> <${utf16.map((u) => u.toString(16).padStart(4, "0")).join("")}>`);
+  }
+  if (!entries.length) return "";
+  // bfchar 區塊每段最多 100 筆
+  const chunks: string[] = [];
+  for (let i = 0; i < entries.length; i += 100) {
+    const part = entries.slice(i, i + 100);
+    chunks.push(`${part.length} beginbfchar\n${part.join("\n")}\nendbfchar`);
+  }
+  return [
+    "/CIDInit /ProcSet findresource begin",
+    "12 dict begin",
+    "begincmap",
+    "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def",
+    "/CMapName /Adobe-Identity-UCS def",
+    "/CMapType 2 def",
+    "1 begincodespacerange <0000> <FFFF> endcodespacerange",
+    chunks.join("\n"),
+    "endcmap",
+    "CMapName currentdict /CMap defineresource pop",
+    "end",
+    "end",
+  ].join("\n");
+}
+
 export function parseToUnicode(cmap: string): Map<string, string> {
   const map = new Map<string, string>();
   for (const block of cmap.matchAll(/beginbfchar([\s\S]*?)endbfchar/g)) {

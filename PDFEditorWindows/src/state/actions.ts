@@ -674,6 +674,40 @@ export async function removeStamps() {
   }
 }
 
+/** 擷取頁面中的圖片並存到選擇的資料夾。 */
+export async function extractEmbeddedImages() {
+  const tab = activeTab();
+  if (!tab) return;
+  const images = await guard("擷取圖片失敗", () => engine.extractImages(tab.engineId));
+  if (!images) return;
+  if (!images.length) {
+    await alertDialog("沒有可擷取的圖片", "這份文件的頁面中找不到內嵌圖片。");
+    return;
+  }
+  const folder = await api().chooseFolder("選擇要存放圖片的資料夾");
+  if (!folder) return;
+  await guard("儲存圖片失敗", async () => {
+    const digits = String(images.length).length;
+    const files = images.map((img, i) => ({ name: `${stem(tab)}-圖片${String(i + 1).padStart(digits, "0")}.${img.format === "jpeg" ? "jpg" : "png"}`, data: img.data }));
+    const written = await api().writeFiles(folder, files);
+    toast(`已擷取 ${written.length} 張圖片`);
+  });
+}
+
+/** 偵測並移除空白頁。 */
+export async function removeBlankPages() {
+  const tab = activeTab();
+  if (!tab) return;
+  const removed = await guard("移除空白頁失敗", () => engine.removeBlankPages(tab.engineId));
+  if (removed === undefined) return;
+  if (removed > 0) {
+    await refresh(tab.key);
+    toast(`已移除 ${removed} 個空白頁`);
+  } else {
+    await alertDialog("沒有空白頁", "找不到可移除的空白頁（含註解或表單欄位的頁面不算空白）。");
+  }
+}
+
 // MARK: - 選單指令
 
 type Handler = () => unknown;
@@ -732,6 +766,8 @@ const commandHandlers: Record<string, Handler> = {
   "remove-stamps": removeStamps,
   "apply-redactions": applyRedactions,
   flatten: needsDoc(() => flatten()),
+  "extract-images-embedded": needsDoc(() => extractEmbeddedImages()),
+  "remove-blank-pages": needsDoc(() => removeBlankPages()),
 };
 
 export async function runCommand(command: string) {

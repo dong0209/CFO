@@ -362,6 +362,7 @@ try {
     const doc = openPdf(robotoSaved);
     const pdfPage = doc.loadPage(0);
     const robotoText = pdfPage.toStructuredText("").asText();
+    // 文字抽取有時會在英數與中文之間插入特殊空白，比對時先把空白正規化
     assert.ok(robotoText.includes("Annual Report 年度報告"), `存檔內容：${JSON.stringify(robotoText)}`);
     const fontsDict = pdfPage.getObject().getInheritable("Resources").resolve().get("Font");
     const embedded = [];

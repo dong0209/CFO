@@ -18,6 +18,7 @@ registerCommands({
   "export-images": () => openDialog("export-images"),
   password: () => openDialog("password"),
   compress: () => openDialog("compress"),
+  metadata: () => openDialog("metadata"),
   "remove-security": () => removeSecurityDocument(),
   batch: () => showModal<void>((done) => <BatchDialog done={done} />),
   compare: () => toggleCompare(),
