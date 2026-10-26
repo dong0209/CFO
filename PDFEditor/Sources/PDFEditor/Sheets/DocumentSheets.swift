@@ -1,4 +1,5 @@
 import PDFEditorCore
+import PDFKit
 import SwiftUI
 
 /// 對話框共用外框：標題、內容與底部按鈕。
@@ -270,10 +271,10 @@ struct MetadataSheet: View {
             if let list = attributes[key] as? [String] { return list.joined(separator: ", ") }
             return ""
         }
-        _title = State(initialValue: value(.titleAttribute))
-        _author = State(initialValue: value(.authorAttribute))
-        _subject = State(initialValue: value(.subjectAttribute))
-        _keywords = State(initialValue: value(.keywordsAttribute))
+        _title = State(initialValue: value(PDFDocumentAttribute.titleAttribute))
+        _author = State(initialValue: value(PDFDocumentAttribute.authorAttribute))
+        _subject = State(initialValue: value(PDFDocumentAttribute.subjectAttribute))
+        _keywords = State(initialValue: value(PDFDocumentAttribute.keywordsAttribute))
     }
 
     var body: some View {
